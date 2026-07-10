@@ -1,0 +1,248 @@
+import { useEffect, useRef, useState } from "react";
+import {
+  Paper, Typography, Stack, Button, TextField, Alert, LinearProgress, Grid2 as Grid, Chip, Box,
+} from "@mui/material";
+import BoltIcon from "@mui/icons-material/Bolt";
+import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import KeyboardIcon from "@mui/icons-material/Keyboard";
+import OpenInBrowserIcon from "@mui/icons-material/OpenInBrowser";
+import LayersIcon from "@mui/icons-material/Layers";
+import LayersClearIcon from "@mui/icons-material/LayersClear";
+import ConstructionIcon from "@mui/icons-material/Construction";
+import StopCircleIcon from "@mui/icons-material/StopCircle";
+import { api } from "../services/api";
+import { useAppStore } from "../store/useAppStore";
+import ViolationList from "../components/ViolationList";
+import AiReportPanel from "../components/AiReportPanel";
+import ScoreRing from "../components/ScoreRing";
+
+export default function ScanCenter() {
+  const [url, setUrl] = useState("https://");
+  const [error, setError] = useState("");
+  const { sessionOpen, setSessionOpen, scanning, setScanning, currentScan, setScan, ignored, aiProvider, attachAiReport } = useAppStore();
+  const [reportBusy, setReportBusy] = useState(false);
+
+  const genReport = async () => {
+    if (!currentScan) return;
+    setError(""); setReportBusy(true);
+    const r = await api.aiReport(currentScan, aiProvider).catch((e) => ({ ok: false, error: String(e) }));
+    setReportBusy(false);
+    if (r.ok) attachAiReport(r.report);
+    else setError(r.error ?? "Report generation failed");
+  };
+  const [overlayMsg, setOverlayMsg] = useState("");
+  const [maxPages, setMaxPages] = useState(10);
+  const [crawl, setCrawl] = useState<{ pages: { url: string; title: string; score: number }[]; log: { msg: string }[]; currentUrl: string | null } | null>(null);
+  const pollRef = useRef<number | null>(null);
+
+  const stopPolling = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  useEffect(() => stopPolling, []);
+
+  const fullScan = async () => {
+    setError(""); setCrawl(null);
+    const r = await api.fullScanStart(maxPages, aiProvider).catch((e) => ({ ok: false, error: String(e) }));
+    if (!r.ok) { setError(r.error ?? "Could not start full scan"); return; }
+    setScanning("full");
+    pollRef.current = window.setInterval(async () => {
+      const st = await api.fullScanStatus().catch(() => null);
+      if (!st) return;
+      setCrawl({ pages: st.pages, log: st.log, currentUrl: st.currentUrl });
+      if (!st.running) {
+        stopPolling(); setScanning("idle");
+        if (st.error) setError(st.error);
+        if (st.result) { setScan(st.result); api.saveSession(st.result).catch(() => {}); }
+      }
+    }, 1500);
+  };
+
+  const stopFullScan = async () => { await api.fullScanStop().catch(() => {}); };
+
+  const [toolbarOn, setToolbarOn] = useState(false);
+  const inspectToolbar = async () => {
+    setError("");
+    const r = toolbarOn ? await api.hideToolbar().catch((e) => ({ ok: false, error: String(e) }))
+                        : await api.showToolbar().catch((e) => ({ ok: false, error: String(e) }));
+    if (r.ok) setToolbarOn(!toolbarOn);
+    else setError(r.error ?? "Could not toggle inspect toolbar");
+  };
+
+  const overlay = async (show: boolean) => {
+    setError(""); setOverlayMsg("");
+    const r = show
+      ? await api.showOverlay(
+          (currentScan?.violations ?? []).filter((v) => !ignored[v.id])
+        ).catch((e) => ({ ok: false, error: String(e) }))
+      : await api.clearOverlay().catch((e) => ({ ok: false, error: String(e) }));
+    if (!r.ok) setError(r.error ?? "Overlay failed");
+    else if (show) setOverlayMsg(`Overlay active — ${r.placed} markers placed. Click a marker in the browser for details and a suggested fix.`);
+  };
+
+  const open = async () => {
+    setError("");
+    const r = await api.openSession(url).catch((e) => ({ ok: false, error: String(e) }));
+    if (r.ok) setSessionOpen(true);
+    else setError(r.error ?? "Could not reach the sidecar. Run: npm run sidecar");
+  };
+
+  const quick = async () => {
+    setError(""); setScanning("quick");
+    const r = await api.quickScan().catch((e) => ({ ok: false, error: String(e) }));
+    setScanning("idle");
+    if (r.ok) { setScan(r); api.saveSession(r).catch(() => {}); }
+    else setError(r.error ?? "Scan failed");
+  };
+
+  const keyboard = async () => {
+    setError(""); setScanning("keyboard");
+    const r = await api.keyboardScan().catch((e) => ({ ok: false, error: String(e) }));
+    setScanning("idle");
+    if (r.ok && currentScan) setScan({ ...currentScan, keyboardFindings: r.findings });
+    else if (!r.ok) setError(r.error ?? "Keyboard audit failed");
+  };
+
+  return (
+    <Stack spacing={2.5}>
+      <Paper sx={{ p: 3 }}>
+        <Typography variant="overline">1 · Browser session</Typography>
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ mt: 1.5 }}>
+          <TextField fullWidth size="small" label="Application URL" value={url}
+                     onChange={(e) => setUrl(e.target.value)} />
+          <Button variant="outlined" startIcon={<OpenInBrowserIcon />} onClick={open}
+                  sx={{ whiteSpace: "nowrap" }}>
+            Open browser
+          </Button>
+        </Stack>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+          A visible Chrome window opens. Log in manually — your credentials never leave the browser.
+          {sessionOpen && <Chip size="small" color="success" label="Session open" sx={{ ml: 1 }} />}
+        </Typography>
+        <Button sx={{ mt: 1.5 }} variant={toolbarOn ? "contained" : "outlined"} color="secondary"
+                startIcon={<ConstructionIcon />} disabled={!sessionOpen} onClick={inspectToolbar}>
+          {toolbarOn ? "Hide inspect toolbar" : "Show inspect toolbar"}
+        </Button>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
+          Manual tools in the browser: contrast picker, alt-text visualizer, screen reader simulator,
+          and color-blindness / low-vision simulation — for the checks automation can't fully judge.
+        </Typography>
+      </Paper>
+
+      <Paper sx={{ p: 3 }}>
+        <Typography variant="overline">2 · Run a scan</Typography>
+        <Grid container spacing={1.5} sx={{ mt: 0.5 }}>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <Button fullWidth variant="contained" size="large" startIcon={<BoltIcon />}
+                    disabled={!sessionOpen || scanning !== "idle"} onClick={quick}>
+              Quick Accessibility Scan
+            </Button>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            <Button fullWidth variant="outlined" size="large" startIcon={<KeyboardIcon />}
+                    disabled={!sessionOpen || scanning !== "idle"} onClick={keyboard}>
+              Keyboard Audit
+            </Button>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 4 }}>
+            {scanning === "full" ? (
+              <Button fullWidth color="error" variant="outlined" size="large"
+                      startIcon={<StopCircleIcon />} onClick={stopFullScan}>
+                Stop Full Scan
+              </Button>
+            ) : (
+              <Button fullWidth variant="outlined" size="large" startIcon={<AutoAwesomeIcon />}
+                      disabled={!sessionOpen || scanning !== "idle"} onClick={fullScan}>
+                AI Full Scan
+              </Button>
+            )}
+          </Grid>
+        </Grid>
+        <Stack direction="row" spacing={2} alignItems="center" sx={{ mt: 2 }}>
+          <TextField size="small" type="number" label="Max pages" value={maxPages}
+                     onChange={(e) => setMaxPages(Math.max(1, Math.min(40, +e.target.value || 10)))}
+                     sx={{ width: 120 }} />
+          <Typography variant="body2" color="text.secondary">
+            The AI explores navigation only — it never clicks delete, submit, payment, approve, or logout.
+          </Typography>
+        </Stack>
+        {scanning !== "idle" && <LinearProgress sx={{ mt: 2 }} />}
+        {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+        {scanning === "full" && crawl && (
+          <Paper variant="outlined" sx={{ mt: 2, p: 2, bgcolor: "#0E1116" }}>
+            <Typography variant="overline">
+              Exploring · {crawl.pages.length} page{crawl.pages.length === 1 ? "" : "s"} scanned
+            </Typography>
+            {crawl.currentUrl && (
+              <Typography variant="body2" noWrap color="primary">{crawl.currentUrl}</Typography>
+            )}
+            <Stack spacing={0.25} sx={{ mt: 1 }}>
+              {crawl.log.map((l, i) => (
+                <Typography key={i} variant="caption" color="text.secondary"
+                            sx={{ fontFamily: "monospace" }}>{l.msg}</Typography>
+              ))}
+            </Stack>
+          </Paper>
+        )}
+      </Paper>
+
+      {currentScan && (
+        <Paper sx={{ p: 3 }}>
+          <Stack direction="row" spacing={3} alignItems="center" sx={{ mb: 2 }}>
+            <ScoreRing score={currentScan.score} size={110} />
+            <Stack>
+              <Typography variant="h6">{currentScan.title || currentScan.url}</Typography>
+              <Typography variant="body2" color="text.secondary">
+                Scanned {new Date(currentScan.timestamp).toLocaleString()}
+              </Typography>
+            </Stack>
+            <Stack direction="row" spacing={1} sx={{ ml: "auto" }}>
+              <Button variant="outlined" startIcon={<LayersIcon />} onClick={() => overlay(true)}
+                      disabled={!sessionOpen}>
+                Show overlay in browser
+              </Button>
+              <Button color="inherit" startIcon={<LayersClearIcon />} onClick={() => overlay(false)}
+                      disabled={!sessionOpen}>
+                Clear
+              </Button>
+              <Button variant="contained" color="secondary" startIcon={<AutoAwesomeIcon />}
+                      onClick={genReport} disabled={reportBusy}>
+                {reportBusy ? "Generating…" : "Generate AI Report"}
+              </Button>
+            </Stack>
+          </Stack>
+          {overlayMsg && <Alert severity="success" sx={{ mb: 2 }}>{overlayMsg}</Alert>}
+          {currentScan.pages && (
+            <Paper variant="outlined" sx={{ mb: 2, p: 2, bgcolor: "#0E1116" }}>
+              <Typography variant="overline">Pages scanned · {currentScan.pages.length}</Typography>
+              <Stack spacing={0.5} sx={{ mt: 1 }}>
+                {currentScan.pages.map((p, i) => (
+                  <Stack key={i} direction="row" justifyContent="space-between">
+                    <Typography variant="body2" noWrap sx={{ maxWidth: "70%" }}>{p.title || p.url}</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {p.score}/100 · {p.violationRuleCount} rules
+                    </Typography>
+                  </Stack>
+                ))}
+              </Stack>
+            </Paper>
+          )}
+          {reportBusy && <LinearProgress sx={{ mb: 2 }} />}
+          {currentScan.aiReport && (
+            <Box sx={{ mb: 2 }}><AiReportPanel report={currentScan.aiReport} /></Box>
+          )}
+          <ViolationList violations={currentScan.violations} />
+          {currentScan.keyboardFindings && (
+            <>
+              <Typography variant="overline" sx={{ display: "block", mt: 3 }}>
+                Keyboard findings · {currentScan.keyboardFindings.length}
+              </Typography>
+              {currentScan.keyboardFindings.map((f, i) => (
+                <Typography key={i} variant="body2" sx={{ fontFamily: "monospace", mt: 0.5 }}>
+                  {f.type} — {f.html}
+                </Typography>
+              ))}
+            </>
+          )}
+        </Paper>
+      )}
+    </Stack>
+  );
+}

@@ -1,0 +1,201 @@
+// A11y Lens crawler — AI autonomous exploration engine (Phase 6).
+//
+// Loop: observe page -> collect candidate actions -> safety filter ->
+// AI (or heuristic) picks next action -> Playwright executes -> axe scan -> repeat.
+//
+// Hard safety rules (never overridden, not even by the AI):
+//   - never leave the origin the crawl started on
+//   - never click anything whose text/attributes match the DENY list
+//   - navigation-only: links, menus, tabs, read-only pages
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { aiChat } from "./ai.mjs";
+
+const require = createRequire(import.meta.url);
+const axeSource = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
+
+const DENY = /\b(delete|remove|destroy|submit|save|send|pay|payment|purchase|buy|checkout|order|approve|reject|deny|confirm|cancel|logout|log out|sign out|signout|deactivate|unsubscribe|transfer|withdraw)\b/i;
+
+export function createCrawler() {
+  const state = {
+    running: false,
+    startedAt: null,
+    pagesScanned: [],   // { url, title, score, counts, violationRuleCount }
+    currentUrl: null,
+    log: [],
+    error: null,
+    result: null,       // aggregate ScanResult when done
+  };
+
+  function log(msg) {
+    state.log.push({ t: new Date().toISOString(), msg });
+    if (state.log.length > 200) state.log.shift();
+  }
+
+  async function observe(page) {
+    return page.evaluate(() => {
+      const acts = [];
+      const seen = new Set();
+      const els = document.querySelectorAll(
+        'a[href], [role="tab"], [role="menuitem"], nav button, [role="link"]'
+      );
+      for (const el of els) {
+        const text = (el.innerText || el.getAttribute("aria-label") || "").trim().slice(0, 80);
+        const href = el.getAttribute("href") || "";
+        const key = text + "|" + href;
+        if (!text || seen.has(key)) continue;
+        seen.add(key);
+        const r = el.getBoundingClientRect();
+        acts.push({
+          text, href,
+          role: el.getAttribute("role") || el.tagName.toLowerCase(),
+          visible: r.width > 0 && r.height > 0,
+        });
+      }
+      return acts.filter(a => a.visible).slice(0, 60);
+    });
+  }
+
+  function safe(action, origin, visited) {
+    if (DENY.test(action.text)) return false;
+    if (action.href) {
+      if (/^(mailto:|tel:|javascript:|#$)/i.test(action.href)) return false;
+      try {
+        const u = new URL(action.href, origin);
+        if (u.origin !== origin) return false;              // stay on-origin
+        if (visited.has(u.origin + u.pathname)) return false;
+      } catch { return false; }
+    }
+    return true;
+  }
+
+  // Provider-agnostic "pick the next action" call. Falls back to the first
+  // candidate if no AI is configured or the call fails.
+  async function aiPick(ai, pageInfo, candidates) {
+    if (!ai?.provider || !candidates.length) return 0;
+    const prompt =
+      `You are exploring a web app to audit accessibility. Current page: "${pageInfo.title}" (${pageInfo.url}).\n` +
+      `Pick the ONE most valuable unexplored navigation action from this JSON list (prefer main sections over footer/legal links). ` +
+      `Reply with ONLY the index number.\n${JSON.stringify(candidates.map((c, i) => ({ i, text: c.text, href: c.href })))}`;
+    try {
+      const text = await aiChat(ai, prompt, 10);
+      const idx = parseInt(String(text).match(/\d+/)?.[0] ?? "0", 10);
+      return idx >= 0 && idx < candidates.length ? idx : 0;
+    } catch (e) {
+      log(`AI pick failed (${e}); using heuristic.`);
+      return 0;
+    }
+  }
+
+  async function scanPage(page) {
+    await page.evaluate(axeSource);
+    const results = await page.evaluate(async () =>
+      window.axe.run(document, {
+        runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"] },
+        resultTypes: ["violations"],
+      })
+    );
+    return results.violations.map(v => ({
+      id: v.id, impact: v.impact ?? "minor", description: v.description, help: v.help,
+      helpUrl: v.helpUrl, wcag: v.tags.filter(t => /^wcag\d/.test(t)),
+      nodes: v.nodes.slice(0, 15).map(n => ({
+        target: n.target.join(" "), html: n.html, failureSummary: n.failureSummary,
+      })),
+    }));
+  }
+
+  async function run(page, opts) {
+    const maxPages = Math.min(opts.maxPages ?? 10, 40);
+    const ai = opts.ai;
+    const origin = new URL(page.url()).origin;
+    const visited = new Set();
+    const merged = new Map(); // ruleId -> violation with nodes annotated by page
+
+    state.running = true;
+    state.startedAt = new Date().toISOString();
+    state.pagesScanned = [];
+    state.log = [];
+    state.error = null;
+    state.result = null;
+    log(`Crawl started at ${origin} (max ${maxPages} pages).`);
+
+    try {
+      while (state.pagesScanned.length < maxPages && state.running) {
+        const url = new URL(page.url());
+        const pageKey = url.origin + url.pathname;
+        state.currentUrl = page.url();
+
+        if (!visited.has(pageKey)) {
+          visited.add(pageKey);
+          const title = await page.title().catch(() => "");
+          log(`Scanning: ${title || pageKey}`);
+          const violations = await scanPage(page);
+          for (const v of violations) {
+            const cur = merged.get(v.id) ?? { ...v, nodes: [] };
+            for (const n of v.nodes)
+              cur.nodes.push({ ...n, failureSummary: `[${url.pathname}] ${n.failureSummary ?? ""}` });
+            merged.set(v.id, cur);
+          }
+          const counts = { critical: 0, serious: 0, moderate: 0, minor: 0 };
+          for (const v of violations) counts[v.impact] += v.nodes.length;
+          const w = { critical: 10, serious: 5, moderate: 2, minor: 1 };
+          const penalty = violations.reduce((s, v) => s + w[v.impact] * Math.min(v.nodes.length, 10), 0);
+          state.pagesScanned.push({
+            url: page.url(), title, score: Math.max(0, 100 - penalty),
+            counts, violationRuleCount: violations.length,
+          });
+        }
+
+        if (state.pagesScanned.length >= maxPages) break;
+
+        const actions = await observe(page);
+        const candidates = actions.filter(a => safe(a, origin, visited)).slice(0, 20);
+        if (!candidates.length) { log("No safe unexplored actions left. Stopping."); break; }
+
+        const pick = candidates[await aiPick(ai, { url: page.url(), title: await page.title().catch(() => "") }, candidates)];
+        log(`Next: "${pick.text}"`);
+        try {
+          if (pick.href) {
+            await page.goto(new URL(pick.href, origin).href, { waitUntil: "domcontentloaded", timeout: 20000 });
+          } else {
+            await page.getByText(pick.text, { exact: false }).first().click({ timeout: 8000 });
+            await page.waitForLoadState("domcontentloaded").catch(() => {});
+          }
+          await page.waitForTimeout(700);
+          if (new URL(page.url()).origin !== origin) {          // belt-and-braces
+            log("Left origin unexpectedly — going back.");
+            await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => {});
+          }
+        } catch (e) {
+          log(`Action failed (${String(e).slice(0, 100)}); continuing.`);
+        }
+      }
+
+      // Aggregate result in the same shape as a quick scan
+      const violations = [...merged.values()];
+      const counts = { critical: 0, serious: 0, moderate: 0, minor: 0 };
+      for (const v of violations) counts[v.impact] += v.nodes.length;
+      const avg = state.pagesScanned.length
+        ? Math.round(state.pagesScanned.reduce((s, p) => s + p.score, 0) / state.pagesScanned.length)
+        : 100;
+      state.result = {
+        url: origin, title: `Full scan · ${state.pagesScanned.length} pages`,
+        timestamp: new Date().toISOString(), score: avg, counts, violations,
+        pages: state.pagesScanned,
+      };
+      log(`Done. ${state.pagesScanned.length} pages, ${violations.length} failing rules, average score ${avg}.`);
+    } catch (e) {
+      state.error = String(e);
+      log(`Crawl error: ${state.error}`);
+    } finally {
+      state.running = false;
+      state.currentUrl = null;
+    }
+  }
+
+  return {
+    state,
+    start: (page, opts) => { if (!state.running) run(page, opts); },
+    stop: () => { state.running = false; },
+  };
+}

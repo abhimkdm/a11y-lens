@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+
+# Frontend build
+dist/
+*.tsbuildinfo
+vite.config.ts.timestamp-*.mjs
+
+# Rust / Tauri
+src-tauri/target/
+
+# Compiled sidecar binaries (built by scripts/build-*.ps1)
+src-tauri/sidecar/a11y-sidecar-*
+
+# pkg cache
+.pkg-cache/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors
+.idea/
+*.swp
+*.swo
+*~
+
+# Test / coverage
+coverage/
+
+# Playwright (if installed locally in project)
+playwright-report/
+test-results/
+blob-report/
