@@ -32,7 +32,7 @@ interface AppState {
   currentScan: ScanResult | null;
   history: ScanResult[];
   ignored: Record<string, { reason: string; expiry?: string }>;
-  aiProvider: { provider: string; model: string; apiKey: string };
+  aiProvider: { provider: string; model: string; apiKey: string; baseUrl: string };
   setSessionOpen: (v: boolean) => void;
   setScanning: (v: AppState["scanning"]) => void;
   setScan: (r: ScanResult) => void;
@@ -48,7 +48,7 @@ export const useAppStore = create<AppState>((set) => ({
   currentScan: null,
   history: [],
   ignored: {},
-  aiProvider: { provider: "ollama", model: "llama3.1", apiKey: "" },
+  aiProvider: { provider: "ollama", model: "llama3.1", apiKey: "", baseUrl: "" },
   setSessionOpen: (v) => set({ sessionOpen: v }),
   setScanning: (v) => set({ scanning: v }),
   setScan: (r) => set((s) => ({ currentScan: r, history: [r, ...s.history].slice(0, 50) })),

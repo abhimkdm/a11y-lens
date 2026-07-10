@@ -1,5 +1,11 @@
-// A11y Lens AI layer — one chat() call, four providers.
-// Used by the crawler (action picking) and the report generator (Phase 8).
+// A11y Lens AI layer — one chat() call, multiple providers.
+export const AI_PROVIDER_DEFAULTS = {
+  kimi: {
+    model: "kimi-k2.6",
+    baseUrl: "https://litellm.ai.netcracker.cloud/v1",
+  },
+};
+
 export async function aiChat(ai, prompt, maxTokens = 2000) {
   if (!ai?.provider) throw new Error("No AI provider configured. Set one in Settings.");
 
@@ -32,15 +38,24 @@ export async function aiChat(ai, prompt, maxTokens = 2000) {
     return r.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
   }
 
-  // openai-compatible (OpenAI, Azure-compatible gateways, LM Studio, etc.)
-  const base = ai.baseUrl || "https://api.openai.com/v1";
-  const r = await fetch(`${base}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ai.apiKey}` },
-    body: JSON.stringify({ model: ai.model, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
-  }).then(x => x.json());
-  if (r.error) throw new Error(r.error.message ?? JSON.stringify(r.error));
-  return r.choices?.[0]?.message?.content ?? "";
+  // Kimi via Netcracker LiteLLM — OpenAI-compatible chat/completions.
+  if (ai.provider === "kimi" || ai.provider === "openai") {
+    const defaults = AI_PROVIDER_DEFAULTS[ai.provider] ?? {};
+    const base = (ai.baseUrl || defaults.baseUrl || "https://api.openai.com/v1").trim().replace(/\/$/, "");
+    const r = await fetch(`${base}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ai.apiKey}` },
+      body: JSON.stringify({
+        model: ai.model || defaults.model,
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: maxTokens,
+      }),
+    }).then(x => x.json());
+    if (r.error) throw new Error(r.error.message ?? JSON.stringify(r.error));
+    return r.choices?.[0]?.message?.content ?? "";
+  }
+
+  throw new Error(`Unknown AI provider: ${ai.provider}`);
 }
 
 // Ask for JSON, strip fences, parse defensively.

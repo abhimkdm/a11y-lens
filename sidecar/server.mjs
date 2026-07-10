@@ -231,7 +231,7 @@ function resolveAi(reqAi) {
 
 app.get("/settings/ai", (_req, res) => {
   const s = settings.get("ai") ?? {};
-  res.json({ ok: true, provider: s.provider ?? "", model: s.model ?? "", hasKey: !!s.apiKeyEnc });
+  res.json({ ok: true, provider: s.provider ?? "", model: s.model ?? "", baseUrl: s.baseUrl ?? "", hasKey: !!s.apiKeyEnc });
 });
 
 app.post("/settings/ai", (req, res) => {

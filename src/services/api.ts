@@ -24,7 +24,7 @@ export const api = {
   showToolbar: () => fetch(`${BASE}/toolbar/show`, { method: "POST" }).then((r) => r.json()),
   hideToolbar: () => fetch(`${BASE}/toolbar/hide`, { method: "POST" }).then((r) => r.json()),
 
-  fullScanStart: (maxPages: number, ai: { provider: string; model: string; apiKey: string }) =>
+  fullScanStart: (maxPages: number, ai: { provider: string; model: string; apiKey: string; baseUrl?: string }) =>
     fetch(`${BASE}/scan/full/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -35,7 +35,7 @@ export const api = {
 
   fullScanStop: () => fetch(`${BASE}/scan/full/stop`, { method: "POST" }).then((r) => r.json()),
 
-  aiReport: (scan: unknown, ai: { provider: string; model: string; apiKey: string }) =>
+  aiReport: (scan: unknown, ai: { provider: string; model: string; apiKey: string; baseUrl?: string }) =>
     fetch(`${BASE}/report/ai`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -63,7 +63,7 @@ export const api = {
     }).then((r) => r.json()),
 
   getAiSettings: () => fetch(`${BASE}/settings/ai`).then((r) => r.json()),
-  saveAiSettings: (cfg: { provider: string; model: string; apiKey: string }) =>
+  saveAiSettings: (cfg: { provider: string; model: string; apiKey: string; baseUrl?: string }) =>
     fetch(`${BASE}/settings/ai`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(cfg),

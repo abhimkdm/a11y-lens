@@ -7,6 +7,14 @@ import LockIcon from "@mui/icons-material/Lock";
 import { api } from "../services/api";
 import { useAppStore } from "../store/useAppStore";
 
+const AI_PROVIDERS: Record<string, { label: string; model: string; baseUrl: string }> = {
+  ollama: { label: "Ollama", model: "llama3.1", baseUrl: "" },
+  openai: { label: "OpenAI", model: "gpt-4o-mini", baseUrl: "" },
+  claude: { label: "Claude", model: "claude-sonnet-4-20250514", baseUrl: "" },
+  gemini: { label: "Gemini", model: "gemini-2.0-flash", baseUrl: "" },
+  kimi: { label: "Kimi", model: "kimi-k2.6", baseUrl: "https://litellm.ai.netcracker.cloud/v1" },
+};
+
 export default function Settings() {
   const { aiProvider, setAiProvider } = useAppStore();
   const [hasKey, setHasKey] = useState(false);
@@ -19,7 +27,7 @@ export default function Settings() {
     api.getAiSettings().then((r) => {
       if (r.ok) {
         setHasKey(r.hasKey);
-        if (r.provider) setAiProvider({ provider: r.provider, model: r.model });
+        if (r.provider) setAiProvider({ provider: r.provider, model: r.model, baseUrl: r.baseUrl ?? "" });
       }
     }).catch(() => setOffline(true));
     api.getSecurity().then((r) => r.ok && setSecurity({ localOnly: r.localOnly, masking: r.masking })).catch(() => {});
@@ -54,13 +62,27 @@ export default function Settings() {
         </Stack>
         <Stack spacing={2} sx={{ mt: 1.5 }}>
           <TextField select size="small" label="Provider" value={aiProvider.provider}
-            onChange={(e) => setAiProvider({ provider: e.target.value })}>
-            {["ollama", "openai", "claude", "gemini"].map((p) => (
-              <MenuItem key={p} value={p}>{p}</MenuItem>
+            onChange={(e) => {
+              const preset = AI_PROVIDERS[e.target.value];
+              setAiProvider({
+                provider: e.target.value,
+                model: preset?.model ?? aiProvider.model,
+                baseUrl: preset?.baseUrl ?? "",
+              });
+            }}>
+            {Object.entries(AI_PROVIDERS).map(([id, { label }]) => (
+              <MenuItem key={id} value={id}>{label}</MenuItem>
             ))}
           </TextField>
           <TextField size="small" label="Model" value={aiProvider.model}
             onChange={(e) => setAiProvider({ model: e.target.value })} />
+          {(aiProvider.provider === "kimi" || aiProvider.provider === "openai") && (
+            <TextField size="small" label="API base URL" value={aiProvider.baseUrl}
+              placeholder={aiProvider.provider === "kimi"
+                ? "https://litellm.ai.netcracker.cloud/v1"
+                : "https://api.openai.com/v1"}
+              onChange={(e) => setAiProvider({ baseUrl: e.target.value })} />
+          )}
           <TextField size="small" type="password"
             label={hasKey ? "API key (leave blank to keep current)" : "API key"}
             value={aiProvider.apiKey}
