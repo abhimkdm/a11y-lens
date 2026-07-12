@@ -10,6 +10,7 @@
 //
 // Install:  npm i playwright axe-core express   &&   npx playwright install chromium
 import express from "express";
+import cors from "cors";
 import { chromium } from "playwright";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
@@ -17,6 +18,7 @@ import { OVERLAY_SOURCE } from "./overlay.mjs";
 import { TOOLBAR_SOURCE } from "./toolbar.mjs";
 import { createCrawler } from "./crawler.mjs";
 import { generateAiReport } from "./report.mjs";
+import { AI_PROVIDER_DEFAULTS, testAiConnection } from "./ai.mjs";
 import { sessions, settings, audit } from "./db.mjs";
 import { encrypt, decrypt, maskScan, assertProviderAllowed } from "./security.mjs";
 import { compareScans } from "./compare.mjs";
@@ -25,6 +27,7 @@ const require = createRequire(import.meta.url);
 const axeSource = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
 
 const app = express();
+app.use(cors());               // allow the Tauri webview / dev server to call this local API
 app.use(express.json({ limit: "40mb" }));
 
 let browser = null;
@@ -219,10 +222,12 @@ function securityConfig() {
 // request-supplied one; local-only mode is enforced for every AI call.
 function resolveAi(reqAi) {
   const stored = settings.get("ai");
+  const provider = reqAi?.provider || stored?.provider;
+  const defaults = AI_PROVIDER_DEFAULTS[provider] ?? {};
   const ai = {
-    provider: reqAi?.provider || stored?.provider,
-    model: reqAi?.model || stored?.model,
-    baseUrl: reqAi?.baseUrl || stored?.baseUrl,
+    provider,
+    model: reqAi?.model || stored?.model || defaults.model,
+    baseUrl: reqAi?.baseUrl || stored?.baseUrl || defaults.baseUrl,
     apiKey: stored?.apiKeyEnc ? decrypt(stored.apiKeyEnc) : reqAi?.apiKey,
   };
   assertProviderAllowed(ai.provider, securityConfig().localOnly);
@@ -234,6 +239,10 @@ app.get("/settings/ai", (_req, res) => {
   res.json({ ok: true, provider: s.provider ?? "", model: s.model ?? "", baseUrl: s.baseUrl ?? "", hasKey: !!s.apiKeyEnc });
 });
 
+app.get("/settings/ai/providers", (_req, res) => {
+  res.json({ ok: true, defaults: AI_PROVIDER_DEFAULTS });
+});
+
 app.post("/settings/ai", (req, res) => {
   const { provider, model, apiKey, baseUrl } = req.body ?? {};
   const prev = settings.get("ai") ?? {};
@@ -243,6 +252,17 @@ app.post("/settings/ai", (req, res) => {
   });
   audit.log("settings.ai.update", `${provider}/${model}`);
   res.json({ ok: true });
+});
+
+app.post("/settings/ai/test", async (req, res) => {
+  try {
+    const ai = resolveAi(req.body?.ai);
+    const result = await testAiConnection(ai);
+    audit.log("settings.ai.test", `${result.provider}/${result.model}`);
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(502).json({ ok: false, error: String(e?.message ?? e) });
+  }
 });
 
 app.get("/settings/security", (_req, res) => res.json({ ok: true, ...securityConfig() }));

@@ -7,20 +7,16 @@ import LockIcon from "@mui/icons-material/Lock";
 import { api } from "../services/api";
 import { useAppStore } from "../store/useAppStore";
 
-const AI_PROVIDERS: Record<string, { label: string; model: string; baseUrl: string }> = {
-  ollama: { label: "Ollama", model: "llama3.1", baseUrl: "" },
-  openai: { label: "OpenAI", model: "gpt-4o-mini", baseUrl: "" },
-  claude: { label: "Claude", model: "claude-sonnet-4-20250514", baseUrl: "" },
-  gemini: { label: "Gemini", model: "gemini-2.0-flash", baseUrl: "" },
-  kimi: { label: "Kimi", model: "kimi-k2.6", baseUrl: "https://litellm.ai.netcracker.cloud/v1" },
-};
+const PROVIDERS = ["ollama", "openai", "claude", "gemini", "kimi"];
 
 export default function Settings() {
   const { aiProvider, setAiProvider } = useAppStore();
   const [hasKey, setHasKey] = useState(false);
+  const [providerDefaults, setProviderDefaults] = useState<Record<string, { model?: string; baseUrl?: string }>>({});
   const [security, setSecurity] = useState({ localOnly: false, masking: true });
   const [audit, setAudit] = useState<{ id: number; timestamp: string; action: string; detail: string }[]>([]);
   const [msg, setMsg] = useState<{ kind: "success" | "error"; text: string } | null>(null);
+  const [testing, setTesting] = useState(false);
   const [offline, setOffline] = useState(false);
 
   useEffect(() => {
@@ -30,9 +26,32 @@ export default function Settings() {
         if (r.provider) setAiProvider({ provider: r.provider, model: r.model, baseUrl: r.baseUrl ?? "" });
       }
     }).catch(() => setOffline(true));
+    api.getAiProviderDefaults().then((r) => r.ok && setProviderDefaults(r.defaults)).catch(() => {});
     api.getSecurity().then((r) => r.ok && setSecurity({ localOnly: r.localOnly, masking: r.masking })).catch(() => {});
     api.auditLog().then((r) => r.ok && setAudit(r.entries)).catch(() => {});
-  }, [setAiProvider]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const selectProvider = (provider: string) => {
+    const d = providerDefaults[provider];
+    setAiProvider({
+      provider,
+      model: d?.model || "",
+      baseUrl: d?.baseUrl || "",
+    });
+  };
+
+  const testConnection = async () => {
+    setMsg(null);
+    setTesting(true);
+    const r = await api.testAiConnection(aiProvider).catch((e) => ({ ok: false, error: String(e) }));
+    setTesting(false);
+    if (r.ok) {
+      setMsg({ kind: "success", text: `Connected to ${r.provider}/${r.model}. Reply: ${r.reply}` });
+    } else {
+      setMsg({ kind: "error", text: r.error ?? "Connection test failed" });
+    }
+  };
 
   const saveAi = async () => {
     setMsg(null);
@@ -51,6 +70,8 @@ export default function Settings() {
     api.auditLog().then((r) => r.ok && setAudit(r.entries)).catch(() => {});
   };
 
+  const isOpenAiCompatible = !["ollama", "claude", "gemini"].includes(aiProvider.provider);
+
   return (
     <Stack spacing={2.5} sx={{ maxWidth: 640 }}>
       {offline && <Alert severity="warning">Sidecar not reachable — settings need <code>npm run sidecar</code> running.</Alert>}
@@ -62,34 +83,32 @@ export default function Settings() {
         </Stack>
         <Stack spacing={2} sx={{ mt: 1.5 }}>
           <TextField select size="small" label="Provider" value={aiProvider.provider}
-            onChange={(e) => {
-              const preset = AI_PROVIDERS[e.target.value];
-              setAiProvider({
-                provider: e.target.value,
-                model: preset?.model ?? aiProvider.model,
-                baseUrl: preset?.baseUrl ?? "",
-              });
-            }}>
-            {Object.entries(AI_PROVIDERS).map(([id, { label }]) => (
-              <MenuItem key={id} value={id}>{label}</MenuItem>
+            onChange={(e) => selectProvider(e.target.value)}>
+            {PROVIDERS.map((p) => (
+              <MenuItem key={p} value={p}>{p}</MenuItem>
             ))}
           </TextField>
           <TextField size="small" label="Model" value={aiProvider.model}
+            placeholder={providerDefaults[aiProvider.provider]?.model}
             onChange={(e) => setAiProvider({ model: e.target.value })} />
-          {(aiProvider.provider === "kimi" || aiProvider.provider === "openai") && (
+          {isOpenAiCompatible && (
             <TextField size="small" label="API base URL" value={aiProvider.baseUrl}
-              placeholder={aiProvider.provider === "kimi"
-                ? "https://litellm.ai.netcracker.cloud/v1"
-                : "https://api.openai.com/v1"}
+              placeholder={providerDefaults[aiProvider.provider]?.baseUrl || "https://api.openai.com/v1"}
+              helperText="OpenAI-compatible endpoint. Leave blank to use the provider default."
               onChange={(e) => setAiProvider({ baseUrl: e.target.value })} />
           )}
           <TextField size="small" type="password"
             label={hasKey ? "API key (leave blank to keep current)" : "API key"}
             value={aiProvider.apiKey}
             onChange={(e) => setAiProvider({ apiKey: e.target.value })} />
-          <Button variant="contained" onClick={saveAi} sx={{ alignSelf: "flex-start" }}>
-            Save provider settings
-          </Button>
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            <Button variant="outlined" onClick={testConnection} disabled={testing || offline}>
+              {testing ? "Testing…" : "Test Connection"}
+            </Button>
+            <Button variant="contained" onClick={saveAi} disabled={offline}>
+              Save provider settings
+            </Button>
+          </Stack>
           {msg && <Alert severity={msg.kind}>{msg.text}</Alert>}
         </Stack>
       </Paper>
