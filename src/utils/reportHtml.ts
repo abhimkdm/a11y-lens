@@ -72,7 +72,7 @@ if(D.aiReport){
   (D.aiReport.quickWins?.length?'<div class="muted">Quick wins</div><p>'+D.aiReport.quickWins.map(esc).join("<br>")+'</p>':"")+
   '<div class="muted">Developer fixes</div>'+
   D.aiReport.fixes.map(f=>'<p><strong>'+esc(f.title)+'</strong> <span class="muted">('+f.rule+")</span><br>"+esc(f.explanation)+
-  '</p><pre>HTML:  '+esc(f.html)+'\n\nReact: '+esc(f.react)+'\n\nAngular: '+esc(f.angular)+'</pre>').join("")+
+  '</p><pre>HTML:  '+esc(f.html)+'\\n\\nReact: '+esc(f.react)+'\\n\\nAngular: '+esc(f.angular)+'</pre>').join("")+
   '</div></details>';
 }
 const active=new Set();let q="";

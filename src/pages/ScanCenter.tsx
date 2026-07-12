@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Paper, Typography, Stack, Button, TextField, Alert, LinearProgress, Grid2 as Grid, Chip, Box,
+  Checkbox, FormControlLabel,
 } from "@mui/material";
 import BoltIcon from "@mui/icons-material/Bolt";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
@@ -10,6 +11,8 @@ import LayersIcon from "@mui/icons-material/Layers";
 import LayersClearIcon from "@mui/icons-material/LayersClear";
 import ConstructionIcon from "@mui/icons-material/Construction";
 import StopCircleIcon from "@mui/icons-material/StopCircle";
+import UploadFileIcon from "@mui/icons-material/UploadFile";
+import FiberManualRecordIcon from "@mui/icons-material/FiberManualRecord";
 import { api } from "../services/api";
 import { useAppStore } from "../store/useAppStore";
 import ViolationList from "../components/ViolationList";
@@ -35,12 +38,93 @@ export default function ScanCenter() {
   const [crawl, setCrawl] = useState<{ pages: { url: string; title: string; score: number }[]; log: { msg: string }[]; currentUrl: string | null } | null>(null);
   const pollRef = useRef<number | null>(null);
 
+  const [useUrlList, setUseUrlList] = useState(false);
+  const [urlList, setUrlList] = useState<string[]>([]);
+  const [urlListError, setUrlListError] = useState("");
+  const [urlListSource, setUrlListSource] = useState(""); // filename, or "Recorded path"
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [recording, setRecording] = useState(false);
+  const [recordedCount, setRecordedCount] = useState(0);
+  const recordPollRef = useRef<number | null>(null);
+
+  const startRecording = async () => {
+    setError("");
+    const r = await api.recordStart().catch((e) => ({ ok: false, error: String(e) }));
+    if (!r.ok) { setError(r.error ?? "Could not start recording"); return; }
+    setRecording(true);
+    setRecordedCount(0);
+    recordPollRef.current = window.setInterval(async () => {
+      const st = await api.recordStatus().catch(() => null);
+      if (st?.ok) setRecordedCount(st.entries.length);
+    }, 1000);
+  };
+
+  const stopRecording = async () => {
+    if (recordPollRef.current) { clearInterval(recordPollRef.current); recordPollRef.current = null; }
+    const r = await api.recordStop().catch((e) => ({ ok: false, error: String(e) }));
+    setRecording(false);
+    if (!r.ok) { setError(r.error ?? "Could not stop recording"); return; }
+    const urls: string[] = r.entries.map((e: { url: string }) => e.url);
+    setUrlList(urls);
+    setUrlListError(urls.length ? "" : "Recording captured no pages — try navigating around before stopping.");
+    setUrlListSource(`Recorded path (${urls.length} page${urls.length === 1 ? "" : "s"})`);
+    setUseUrlList(true); // recording a path implies you want to scan it
+  };
+
+  const downloadRecordedPath = () => {
+    const blob = new Blob([JSON.stringify({ urls: urlList }, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `a11y-lens-path_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const parseUrlListJson = (raw: string): string[] => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error("Not valid JSON.");
+    }
+    // Accept either a plain array of strings, or { urls: [...] }.
+    const arr = Array.isArray(parsed) ? parsed
+      : (parsed && typeof parsed === "object" && Array.isArray((parsed as { urls?: unknown }).urls))
+      ? (parsed as { urls: unknown[] }).urls
+      : null;
+    if (!arr) throw new Error('Expected a JSON array of URLs, or an object like {"urls": [...]}.');
+    if (!arr.length) throw new Error("The list is empty.");
+    const bad = arr.find((u) => typeof u !== "string" || !u.trim());
+    if (bad !== undefined) throw new Error("Every entry must be a non-empty string (an absolute URL or a path starting with \"/\").");
+    return arr as string[];
+  };
+
+  const handleUrlListFile = async (file: File) => {
+    setUrlListError(""); setUrlList([]); setUrlListSource(file.name);
+    try {
+      const text = await file.text();
+      const list = parseUrlListJson(text);
+      setUrlList(list);
+    } catch (e) {
+      setUrlListError((e as Error).message);
+    }
+  };
+
   const stopPolling = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
-  useEffect(() => stopPolling, []);
+  useEffect(() => () => {
+    stopPolling();
+    if (recordPollRef.current) clearInterval(recordPollRef.current);
+  }, []);
 
   const fullScan = async () => {
+    if (useUrlList && (!urlList.length || urlListError)) {
+      setError("Upload a valid URL list JSON file first, or turn off \"Use custom URL list\".");
+      return;
+    }
     setError(""); setCrawl(null);
-    const r = await api.fullScanStart(maxPages, aiProvider).catch((e) => ({ ok: false, error: String(e) }));
+    const r = await api.fullScanStart(maxPages, aiProvider, useUrlList ? urlList : undefined)
+      .catch((e) => ({ ok: false, error: String(e) }));
     if (!r.ok) { setError(r.error ?? "Could not start full scan"); return; }
     setScanning("full");
     pollRef.current = window.setInterval(async () => {
@@ -121,13 +205,40 @@ export default function ScanCenter() {
           {toolbarOn ? "Hide inspect toolbar" : "Show inspect toolbar"}
         </Button>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-          Manual tools in the browser: contrast picker, alt-text visualizer, screen reader simulator,
-          and color-blindness / low-vision simulation — for the checks automation can't fully judge.
+          Manual tools in the browser: alt-text visualizer and screen reader simulator —
+          for the checks automation can't fully judge.
         </Typography>
       </Paper>
 
       <Paper sx={{ p: 3 }}>
-        <Typography variant="overline">2 · Run a scan</Typography>
+        <Typography variant="overline">2 · Record a path (optional)</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 1.5 }}>
+          Click through a specific journey yourself — login, add to cart, checkout — and A11y Lens
+          remembers every page you visit. Scan that exact path later instead of relying on AI navigation.
+        </Typography>
+        <Stack direction="row" spacing={1.5} alignItems="center">
+          {recording ? (
+            <Button variant="contained" color="error" startIcon={<FiberManualRecordIcon />} onClick={stopRecording}>
+              Stop recording ({recordedCount} page{recordedCount === 1 ? "" : "s"})
+            </Button>
+          ) : (
+            <Button variant="outlined" color="secondary" startIcon={<FiberManualRecordIcon />}
+                    disabled={!sessionOpen} onClick={startRecording}>
+              Record path
+            </Button>
+          )}
+          {recording && <Chip size="small" color="error" label="● Recording — navigate in the browser now" />}
+          {!recording && urlList.length > 0 && urlListSource.startsWith("Recorded") && (
+            <>
+              <Chip size="small" color="success" label={urlListSource} />
+              <Button size="small" onClick={downloadRecordedPath}>Save as JSON</Button>
+            </>
+          )}
+        </Stack>
+      </Paper>
+
+      <Paper sx={{ p: 3 }}>
+        <Typography variant="overline">3 · Run a scan</Typography>
         <Grid container spacing={1.5} sx={{ mt: 0.5 }}>
           <Grid size={{ xs: 12, sm: 4 }}>
             <Button fullWidth variant="contained" size="large" startIcon={<BoltIcon />}
@@ -157,12 +268,45 @@ export default function ScanCenter() {
         </Grid>
         <Stack direction="row" spacing={2} alignItems="center" sx={{ mt: 2 }}>
           <TextField size="small" type="number" label="Max pages" value={maxPages}
+                     disabled={useUrlList}
                      onChange={(e) => setMaxPages(Math.max(1, Math.min(40, +e.target.value || 10)))}
                      sx={{ width: 120 }} />
           <Typography variant="body2" color="text.secondary">
             The AI explores navigation only — it never clicks delete, submit, payment, approve, or logout.
           </Typography>
         </Stack>
+
+        <FormControlLabel
+          sx={{ mt: 1 }}
+          control={<Checkbox checked={useUrlList}
+            onChange={(e) => { setUseUrlList(e.target.checked); setError(""); }} />}
+          label="Use a custom URL list instead of AI navigation (from a recorded path or an uploaded JSON file)"
+        />
+        {useUrlList && (
+          <Box sx={{ mt: 0.5, mb: 1 }}>
+            <input ref={fileInputRef} type="file" accept=".json,application/json" hidden
+                   onChange={(e) => e.target.files?.[0] && handleUrlListFile(e.target.files[0])} />
+            <Stack direction="row" spacing={1.5} alignItems="center">
+              <Button size="small" variant="outlined" startIcon={<UploadFileIcon />}
+                      onClick={() => fileInputRef.current?.click()}>
+                Upload URL list (.json)
+              </Button>
+              {urlListSource && !urlListError && (
+                <Chip size="small" color="success" label={
+                  urlListSource.startsWith("Recorded") ? urlListSource : `${urlListSource} · ${urlList.length} URL${urlList.length === 1 ? "" : "s"}`
+                } />
+              )}
+              {urlListSource && urlListError && (
+                <Chip size="small" color="error" label={urlListSource} />
+              )}
+            </Stack>
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.75 }}>
+              Record a path above, or upload JSON like <code>["/pricing", "/about", "https://yourapp.com/help"]</code> —
+              or <code>{"{"}"urls": [...]{"}"}</code>. Only pages on the same origin as the open session are scanned.
+            </Typography>
+            {urlListError && <Alert severity="error" sx={{ mt: 1 }}>{urlListError}</Alert>}
+          </Box>
+        )}
         {scanning !== "idle" && <LinearProgress sx={{ mt: 2 }} />}
         {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
         {scanning === "full" && crawl && (

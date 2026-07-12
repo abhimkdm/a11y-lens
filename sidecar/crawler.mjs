@@ -1,7 +1,11 @@
 // A11y Lens crawler — AI autonomous exploration engine (Phase 6).
 //
-// Loop: observe page -> collect candidate actions -> safety filter ->
-// AI (or heuristic) picks next action -> Playwright executes -> axe scan -> repeat.
+// Two modes:
+//   1. AI-driven: observe page -> collect candidate actions -> safety filter ->
+//      AI (or heuristic) picks next action -> Playwright executes -> axe scan -> repeat.
+//   2. Custom URL list: user supplies an ordered list of URLs (e.g. from a
+//      sitemap or a JSON upload); each is visited and scanned in sequence,
+//      no AI action-picking involved. Still origin-locked for safety.
 //
 // Hard safety rules (never overridden, not even by the AI):
 //   - never leave the origin the crawl started on
@@ -105,11 +109,12 @@ export function createCrawler() {
   }
 
   async function run(page, opts) {
-    const maxPages = Math.min(opts.maxPages ?? 10, 40);
     const ai = opts.ai;
     const origin = new URL(page.url()).origin;
     const visited = new Set();
     const merged = new Map(); // ruleId -> violation with nodes annotated by page
+    const urlList = Array.isArray(opts.urlList) ? opts.urlList.filter(u => typeof u === "string" && u.trim()) : null;
+    const maxPages = urlList ? Math.min(urlList.length, 100) : Math.min(opts.maxPages ?? 10, 40);
 
     state.running = true;
     state.startedAt = new Date().toISOString();
@@ -117,57 +122,96 @@ export function createCrawler() {
     state.log = [];
     state.error = null;
     state.result = null;
-    log(`Crawl started at ${origin} (max ${maxPages} pages).`);
+
+    function recordScan(url, title, violations) {
+      const u = new URL(url);
+      for (const v of violations) {
+        const cur = merged.get(v.id) ?? { ...v, nodes: [] };
+        for (const n of v.nodes)
+          cur.nodes.push({ ...n, failureSummary: `[${u.pathname}] ${n.failureSummary ?? ""}` });
+        merged.set(v.id, cur);
+      }
+      const counts = { critical: 0, serious: 0, moderate: 0, minor: 0 };
+      for (const v of violations) counts[v.impact] += v.nodes.length;
+      const w = { critical: 10, serious: 5, moderate: 2, minor: 1 };
+      const penalty = violations.reduce((s, v) => s + w[v.impact] * Math.min(v.nodes.length, 10), 0);
+      state.pagesScanned.push({
+        url, title, score: Math.max(0, 100 - penalty),
+        counts, violationRuleCount: violations.length,
+      });
+    }
 
     try {
-      while (state.pagesScanned.length < maxPages && state.running) {
-        const url = new URL(page.url());
-        const pageKey = url.origin + url.pathname;
-        state.currentUrl = page.url();
-
-        if (!visited.has(pageKey)) {
+      if (urlList) {
+        log(`Custom URL list scan started at ${origin} (${urlList.length} URL${urlList.length === 1 ? "" : "s"} provided).`);
+        for (const raw of urlList) {
+          if (!state.running) break;
+          const trimmed = raw.trim();
+          const looksAbsolute = /^https?:\/\//i.test(trimmed);
+          const looksPath = trimmed.startsWith("/");
+          if (!looksAbsolute && !looksPath) {
+            log(`Skipping invalid entry (must be an absolute http(s) URL or start with "/"): "${trimmed}"`);
+            continue;
+          }
+          let target;
+          try { target = new URL(trimmed, origin); } catch { log(`Skipping invalid URL: "${trimmed}"`); continue; }
+          if (!/^https?:$/.test(target.protocol)) { log(`Skipping non-http(s) URL: "${trimmed}"`); continue; }
+          if (target.origin !== origin) { log(`Skipping off-origin URL (safety — must match ${origin}): ${trimmed}`); continue; }
+          const pageKey = target.origin + target.pathname;
+          if (visited.has(pageKey)) { log(`Skipping duplicate: ${trimmed}`); continue; }
           visited.add(pageKey);
+
+          state.currentUrl = target.href;
+          try {
+            await page.goto(target.href, { waitUntil: "domcontentloaded", timeout: 20000 });
+          } catch (e) {
+            log(`Navigation failed for ${trimmed}: ${String(e).slice(0, 100)}`);
+            continue;
+          }
+          await page.waitForTimeout(500);
           const title = await page.title().catch(() => "");
           log(`Scanning: ${title || pageKey}`);
           const violations = await scanPage(page);
-          for (const v of violations) {
-            const cur = merged.get(v.id) ?? { ...v, nodes: [] };
-            for (const n of v.nodes)
-              cur.nodes.push({ ...n, failureSummary: `[${url.pathname}] ${n.failureSummary ?? ""}` });
-            merged.set(v.id, cur);
-          }
-          const counts = { critical: 0, serious: 0, moderate: 0, minor: 0 };
-          for (const v of violations) counts[v.impact] += v.nodes.length;
-          const w = { critical: 10, serious: 5, moderate: 2, minor: 1 };
-          const penalty = violations.reduce((s, v) => s + w[v.impact] * Math.min(v.nodes.length, 10), 0);
-          state.pagesScanned.push({
-            url: page.url(), title, score: Math.max(0, 100 - penalty),
-            counts, violationRuleCount: violations.length,
-          });
+          recordScan(target.href, title, violations);
         }
+      } else {
+        log(`Crawl started at ${origin} (max ${maxPages} pages).`);
+        while (state.pagesScanned.length < maxPages && state.running) {
+          const url = new URL(page.url());
+          const pageKey = url.origin + url.pathname;
+          state.currentUrl = page.url();
 
-        if (state.pagesScanned.length >= maxPages) break;
-
-        const actions = await observe(page);
-        const candidates = actions.filter(a => safe(a, origin, visited)).slice(0, 20);
-        if (!candidates.length) { log("No safe unexplored actions left. Stopping."); break; }
-
-        const pick = candidates[await aiPick(ai, { url: page.url(), title: await page.title().catch(() => "") }, candidates)];
-        log(`Next: "${pick.text}"`);
-        try {
-          if (pick.href) {
-            await page.goto(new URL(pick.href, origin).href, { waitUntil: "domcontentloaded", timeout: 20000 });
-          } else {
-            await page.getByText(pick.text, { exact: false }).first().click({ timeout: 8000 });
-            await page.waitForLoadState("domcontentloaded").catch(() => {});
+          if (!visited.has(pageKey)) {
+            visited.add(pageKey);
+            const title = await page.title().catch(() => "");
+            log(`Scanning: ${title || pageKey}`);
+            const violations = await scanPage(page);
+            recordScan(page.url(), title, violations);
           }
-          await page.waitForTimeout(700);
-          if (new URL(page.url()).origin !== origin) {          // belt-and-braces
-            log("Left origin unexpectedly — going back.");
-            await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => {});
+
+          if (state.pagesScanned.length >= maxPages) break;
+
+          const actions = await observe(page);
+          const candidates = actions.filter(a => safe(a, origin, visited)).slice(0, 20);
+          if (!candidates.length) { log("No safe unexplored actions left. Stopping."); break; }
+
+          const pick = candidates[await aiPick(ai, { url: page.url(), title: await page.title().catch(() => "") }, candidates)];
+          log(`Next: "${pick.text}"`);
+          try {
+            if (pick.href) {
+              await page.goto(new URL(pick.href, origin).href, { waitUntil: "domcontentloaded", timeout: 20000 });
+            } else {
+              await page.getByText(pick.text, { exact: false }).first().click({ timeout: 8000 });
+              await page.waitForLoadState("domcontentloaded").catch(() => {});
+            }
+            await page.waitForTimeout(700);
+            if (new URL(page.url()).origin !== origin) {          // belt-and-braces
+              log("Left origin unexpectedly — going back.");
+              await page.goBack({ waitUntil: "domcontentloaded" }).catch(() => {});
+            }
+          } catch (e) {
+            log(`Action failed (${String(e).slice(0, 100)}); continuing.`);
           }
-        } catch (e) {
-          log(`Action failed (${String(e).slice(0, 100)}); continuing.`);
         }
       }
 

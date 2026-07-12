@@ -16,7 +16,6 @@ export default function Settings() {
   const [security, setSecurity] = useState({ localOnly: false, masking: true });
   const [audit, setAudit] = useState<{ id: number; timestamp: string; action: string; detail: string }[]>([]);
   const [msg, setMsg] = useState<{ kind: "success" | "error"; text: string } | null>(null);
-  const [testing, setTesting] = useState(false);
   const [offline, setOffline] = useState(false);
 
   useEffect(() => {
@@ -36,21 +35,9 @@ export default function Settings() {
     const d = providerDefaults[provider];
     setAiProvider({
       provider,
-      model: d?.model || "",
-      baseUrl: d?.baseUrl || "",
+      model: aiProvider.model || d?.model || "",
+      baseUrl: aiProvider.baseUrl || d?.baseUrl || "",
     });
-  };
-
-  const testConnection = async () => {
-    setMsg(null);
-    setTesting(true);
-    const r = await api.testAiConnection(aiProvider).catch((e) => ({ ok: false, error: String(e) }));
-    setTesting(false);
-    if (r.ok) {
-      setMsg({ kind: "success", text: `Connected to ${r.provider}/${r.model}. Reply: ${r.reply}` });
-    } else {
-      setMsg({ kind: "error", text: r.error ?? "Connection test failed" });
-    }
   };
 
   const saveAi = async () => {
@@ -68,6 +55,21 @@ export default function Settings() {
     setSecurity(next);
     await api.saveSecurity(next).catch(() => {});
     api.auditLog().then((r) => r.ok && setAudit(r.entries)).catch(() => {});
+  };
+
+  const [testing, setTesting] = useState(false);
+  const testConnection = async () => {
+    setMsg(null); setTesting(true);
+    const r = await api.testAiConnection(aiProvider).catch((e) => ({ ok: false, error: String(e) }));
+    setTesting(false);
+    if (r.ok) {
+      setMsg({
+        kind: "success",
+        text: `Connected — ${r.provider}/${r.model}${r.baseUrl ? ` via ${r.baseUrl}` : ""} responded in ${r.latencyMs}ms (reply: "${r.reply}").`,
+      });
+    } else {
+      setMsg({ kind: "error", text: r.error ?? "Connection test failed" });
+    }
   };
 
   const isOpenAiCompatible = !["ollama", "claude", "gemini"].includes(aiProvider.provider);
@@ -92,20 +94,20 @@ export default function Settings() {
             placeholder={providerDefaults[aiProvider.provider]?.model}
             onChange={(e) => setAiProvider({ model: e.target.value })} />
           {isOpenAiCompatible && (
-            <TextField size="small" label="API base URL" value={aiProvider.baseUrl}
+            <TextField size="small" label="Base URL" value={aiProvider.baseUrl}
               placeholder={providerDefaults[aiProvider.provider]?.baseUrl || "https://api.openai.com/v1"}
-              helperText="OpenAI-compatible endpoint. Leave blank to use the provider default."
+              helperText="OpenAI-compatible endpoint. Leave blank to use the provider's default."
               onChange={(e) => setAiProvider({ baseUrl: e.target.value })} />
           )}
           <TextField size="small" type="password"
             label={hasKey ? "API key (leave blank to keep current)" : "API key"}
             value={aiProvider.apiKey}
             onChange={(e) => setAiProvider({ apiKey: e.target.value })} />
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            <Button variant="outlined" onClick={testConnection} disabled={testing || offline}>
+          <Stack direction="row" spacing={1.5}>
+            <Button variant="outlined" onClick={testConnection} disabled={testing}>
               {testing ? "Testing…" : "Test Connection"}
             </Button>
-            <Button variant="contained" onClick={saveAi} disabled={offline}>
+            <Button variant="contained" onClick={saveAi} disabled={testing}>
               Save provider settings
             </Button>
           </Stack>

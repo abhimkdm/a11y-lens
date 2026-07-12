@@ -13,7 +13,7 @@ async function req(url: string, init?: RequestInit) {
       error: "Can't reach the automation sidecar at localhost:8787. Start it with `npm run sidecar` in a separate terminal, then try again.",
     };
   }
-  return res.json().catch(() => ({ ok: false, error: `Sidecar error (${res.status})` }));
+  return res.json();
 }
 
 export const api = {
@@ -24,6 +24,10 @@ export const api = {
       body: JSON.stringify({ url }),
     }),
   status: () => req(`${BASE}/session/status`),
+
+  recordStart: () => req(`${BASE}/record/start`, { method: "POST" }),
+  recordStop: () => req(`${BASE}/record/stop`, { method: "POST" }),
+  recordStatus: () => req(`${BASE}/record/status`),
   quickScan: () => req(`${BASE}/scan/quick`, { method: "POST" }),
   keyboardScan: () => req(`${BASE}/scan/keyboard`, { method: "POST" }),
 
@@ -39,11 +43,15 @@ export const api = {
   showToolbar: () => req(`${BASE}/toolbar/show`, { method: "POST" }),
   hideToolbar: () => req(`${BASE}/toolbar/hide`, { method: "POST" }),
 
-  fullScanStart: (maxPages: number, ai: { provider: string; model: string; apiKey: string; baseUrl?: string }) =>
+  fullScanStart: (
+    maxPages: number,
+    ai: { provider: string; model: string; apiKey: string; baseUrl?: string },
+    urlList?: string[]
+  ) =>
     req(`${BASE}/scan/full/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ maxPages, ai }),
+      body: JSON.stringify({ maxPages, ai, urlList }),
     }),
 
   fullScanStatus: () => req(`${BASE}/scan/full/status`),
@@ -79,15 +87,16 @@ export const api = {
 
   getAiSettings: () => req(`${BASE}/settings/ai`),
   getAiProviderDefaults: () => req(`${BASE}/settings/ai/providers`),
+  testAiConnection: (cfg: { provider: string; model: string; apiKey: string; baseUrl?: string }) =>
+    req(`${BASE}/settings/ai/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cfg),
+    }),
   saveAiSettings: (cfg: { provider: string; model: string; apiKey: string; baseUrl?: string }) =>
     req(`${BASE}/settings/ai`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(cfg),
-    }),
-  testAiConnection: (ai: { provider: string; model: string; apiKey: string; baseUrl?: string }) =>
-    req(`${BASE}/settings/ai/test`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ai }),
     }),
   getSecurity: () => req(`${BASE}/settings/security`),
   saveSecurity: (cfg: { localOnly?: boolean; masking?: boolean }) =>

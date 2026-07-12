@@ -18,7 +18,8 @@ import { OVERLAY_SOURCE } from "./overlay.mjs";
 import { TOOLBAR_SOURCE } from "./toolbar.mjs";
 import { createCrawler } from "./crawler.mjs";
 import { generateAiReport } from "./report.mjs";
-import { AI_PROVIDER_DEFAULTS, testAiConnection } from "./ai.mjs";
+import { AI_PROVIDER_DEFAULTS, aiChat } from "./ai.mjs";
+import { createRecorder } from "./recorder.mjs";
 import { sessions, settings, audit } from "./db.mjs";
 import { encrypt, decrypt, maskScan, assertProviderAllowed } from "./security.mjs";
 import { compareScans } from "./compare.mjs";
@@ -33,9 +34,11 @@ app.use(express.json({ limit: "40mb" }));
 let browser = null;
 let page = null;
 const crawler = createCrawler();
+const recorder = createRecorder();
 
 app.post("/session/open", async (req, res) => {
   try {
+    if (recorder.state.active) recorder.stop(); // avoid a dangling listener on the old page object
     if (!browser) {
       browser = await chromium.launch({ headless: false, channel: "chrome" })
         .catch(() => chromium.launch({ headless: false }));
@@ -52,6 +55,30 @@ app.post("/session/open", async (req, res) => {
 app.get("/session/status", async (_req, res) => {
   if (!page) return res.json({ open: false });
   res.json({ open: true, url: page.url(), title: await page.title().catch(() => "") });
+});
+
+// ---- Path recorder -------------------------------------------------------
+// Record a QA person's manual navigation (login -> checkout -> confirm) as
+// an ordered URL list, then feed it straight into the same "custom URL
+// list" replay the crawler already supports for AI Full Scan.
+app.post("/record/start", async (req, res) => {
+  try {
+    await recorder.start(page);
+    audit.log("record.start", page.url());
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e.message ?? e) });
+  }
+});
+
+app.post("/record/stop", (_req, res) => {
+  const entries = recorder.stop();
+  audit.log("record.stop", `${entries.length} pages`);
+  res.json({ ok: true, entries });
+});
+
+app.get("/record/status", (_req, res) => {
+  res.json({ ok: true, active: recorder.state.active, entries: recorder.state.entries });
 });
 
 app.post("/scan/quick", async (_req, res) => {
@@ -144,7 +171,11 @@ app.post("/overlay/clear", async (_req, res) => {
 app.post("/scan/full/start", (req, res) => {
   if (!page) return res.status(400).json({ ok: false, error: "No browser session. Open one and log in first." });
   if (crawler.state.running) return res.status(409).json({ ok: false, error: "A full scan is already running." });
-  crawler.start(page, { maxPages: req.body?.maxPages, ai: req.body?.ai });
+  let ai;
+  try { ai = resolveAi(req.body?.ai); } catch (e) { return res.status(403).json({ ok: false, error: String(e.message ?? e) }); }
+  const urlList = Array.isArray(req.body?.urlList) ? req.body.urlList : undefined;
+  audit.log("scan.full.start", urlList ? `custom URL list (${urlList.length})` : page.url());
+  crawler.start(page, { maxPages: req.body?.maxPages, ai, urlList });
   res.json({ ok: true });
 });
 
@@ -243,6 +274,29 @@ app.get("/settings/ai/providers", (_req, res) => {
   res.json({ ok: true, defaults: AI_PROVIDER_DEFAULTS });
 });
 
+// Test the AI provider config with a minimal real completion call.
+// Uses request-supplied values (what's currently typed in the form) merged
+// with the stored encrypted key, so users can test before or after saving.
+app.post("/settings/ai/test", async (req, res) => {
+  const started = Date.now();
+  try {
+    const ai = resolveAi(req.body ?? {});
+    const reply = await aiChat(ai, 'Reply with exactly the word "OK" and nothing else.', 10);
+    audit.log("settings.ai.test", `${ai.provider}/${ai.model} ok`);
+    res.json({
+      ok: true,
+      provider: ai.provider,
+      model: ai.model,
+      baseUrl: ai.baseUrl ?? null,
+      latencyMs: Date.now() - started,
+      reply: String(reply).slice(0, 80),
+    });
+  } catch (e) {
+    audit.log("settings.ai.test", `failed: ${String(e.message ?? e).slice(0, 120)}`);
+    res.status(502).json({ ok: false, error: String(e.message ?? e), latencyMs: Date.now() - started });
+  }
+});
+
 app.post("/settings/ai", (req, res) => {
   const { provider, model, apiKey, baseUrl } = req.body ?? {};
   const prev = settings.get("ai") ?? {};
@@ -252,17 +306,6 @@ app.post("/settings/ai", (req, res) => {
   });
   audit.log("settings.ai.update", `${provider}/${model}`);
   res.json({ ok: true });
-});
-
-app.post("/settings/ai/test", async (req, res) => {
-  try {
-    const ai = resolveAi(req.body?.ai);
-    const result = await testAiConnection(ai);
-    audit.log("settings.ai.test", `${result.provider}/${result.model}`);
-    res.json({ ok: true, ...result });
-  } catch (e) {
-    res.status(502).json({ ok: false, error: String(e?.message ?? e) });
-  }
 });
 
 app.get("/settings/security", (_req, res) => res.json({ ok: true, ...securityConfig() }));
