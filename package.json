@@ -12,7 +12,8 @@
     "tauri:build": "tauri build",
     "sidecar": "node --no-warnings=ExperimentalWarning sidecar/server.mjs",
     "launch": "pwsh scripts/launch-dev.ps1",
-    "sidecar:build": "node scripts/build-sidecar.mjs"
+    "sidecar:build": "node scripts/build-sidecar.mjs",
+    "icons": "python3 scripts/make-icons.py"
   },
   "dependencies": {
     "@emotion/react": "^11.13.0",
