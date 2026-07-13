@@ -1,7 +1,8 @@
 // A11y Lens AI Report Generator (Phase 8).
 // Turns raw axe findings into three audiences' views:
 //   executive summary · developer fixes (HTML/React/Angular) · business impact.
-import { aiJson } from "./ai.mjs";
+import { aiChat } from "./ai.mjs";
+import { parseAiJson } from "./json-repair.mjs";
 
 export async function generateAiReport(scan, ai) {
   // Keep the prompt lean: top rules by severity, one sample element each.
@@ -44,12 +45,58 @@ Produce a JSON object with exactly this shape:
 }
 Cover every rule listed above in "fixes". Base each corrected snippet on the provided sampleHtml.`;
 
-  const report = await aiJson(ai, prompt, 3500);
+  const raw = await aiChat(
+    ai,
+    prompt + "\n\nReply with ONLY valid JSON. No markdown fences, no preamble. " +
+      "Inside JSON string values, escape all double quotes and newlines. " +
+      "Never use backticks to quote a value — JSON has no backtick strings.",
+    4000
+  );
 
-  // Minimal shape validation so the UI never renders garbage.
-  if (typeof report.executiveSummary !== "string" || !Array.isArray(report.fixes))
-    throw new Error("AI returned an unexpected report shape. Try again or switch models.");
-  report.generatedAt = new Date().toISOString();
-  report.provider = `${ai.provider}/${ai.model}`;
-  return report;
+  // Parse tolerantly. A model that emits one malformed code snippet must not cost
+  // the user their whole report — we recover what we can and surface the rest as
+  // warnings rather than throwing everything away.
+  const { data, warnings, recovered } = parseAiJson(raw, {
+    salvageKeys: ["fixes", "quickWins"],
+  });
+
+  const report = {
+    executiveSummary:
+      typeof data.executiveSummary === "string" && data.executiveSummary.trim()
+        ? data.executiveSummary
+        : "(The model did not return an executive summary — see Logs for details.)",
+    businessImpact:
+      typeof data.businessImpact === "string" && data.businessImpact.trim()
+        ? data.businessImpact
+        : "(The model did not return a business impact section — see Logs for details.)",
+    fixes: Array.isArray(data.fixes)
+      ? data.fixes
+          .filter((f) => f && (f.title || f.rule))
+          .map((f) => ({
+            rule: String(f.rule ?? "unknown"),
+            impact: ["critical", "serious", "moderate", "minor"].includes(f.impact) ? f.impact : "moderate",
+            title: String(f.title ?? f.rule ?? "Fix"),
+            explanation: String(f.explanation ?? ""),
+            html: String(f.html ?? ""),
+            react: String(f.react ?? ""),
+            angular: String(f.angular ?? ""),
+          }))
+      : [],
+    quickWins: Array.isArray(data.quickWins) ? data.quickWins.map(String) : [],
+    generatedAt: new Date().toISOString(),
+    provider: `${ai.provider}/${ai.model}`,
+  };
+
+  // If we lost content, say so ON the report rather than silently shipping a
+  // thinner one — but still ship it.
+  const expected = top.length;
+  if (report.fixes.length < expected) {
+    warnings.push({
+      stage: "coverage",
+      message: `Asked for ${expected} fix${expected === 1 ? "" : "es"} but only ${report.fixes.length} came back intact. The rest were malformed and dropped.`,
+      detail: null,
+    });
+  }
+
+  return { report, warnings, recovered, degraded: recovered || report.fixes.length < expected };
 }

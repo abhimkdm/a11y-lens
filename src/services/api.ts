@@ -16,6 +16,24 @@ async function req(url: string, init?: RequestInit) {
   return res.json();
 }
 
+// The packaged app spawns the sidecar at launch, but Node + Express take a
+// moment to bind the port. Without waiting, the first render races the boot and
+// every screen shows "can't reach the sidecar" for a second or two — which is
+// indistinguishable from a real failure.
+export async function waitForSidecar(timeoutMs = 20000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${BASE}/session/status`, { signal: AbortSignal.timeout(1500) });
+      if (res.ok) return true;
+    } catch {
+      // not up yet
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  return false;
+}
+
 export const api = {
   openSession: (url?: string) =>
     req(`${BASE}/session/open`, {
@@ -150,4 +168,13 @@ export const api = {
       body: JSON.stringify(cfg),
     }),
   auditLog: () => req(`${BASE}/audit`),
+
+  getLogs: (limit = 200) => req(`${BASE}/logs?limit=${limit}`),
+  clearLogs: () => req(`${BASE}/logs`, { method: "DELETE" }),
+  logToServer: (entry: { level: string; source: string; message: string; detail?: string; context?: unknown }) =>
+    req(`${BASE}/logs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(entry),
+    }),
 };

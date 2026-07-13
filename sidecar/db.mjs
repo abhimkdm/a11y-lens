@@ -1,13 +1,40 @@
 // A11y Lens session store (Phase 10) — SQLite via better-sqlite3.
 // Every scan becomes a session row; full scan payload is stored as JSON.
-import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 
 const dir = process.env.A11Y_DATA_DIR || join(homedir(), ".a11y-lens");
 mkdirSync(dir, { recursive: true });
-const db = new Database(join(dir, "sessions.db"));
+const dbPath = join(dir, "sessions.db");
+
+// Prefer Node's BUILT-IN SQLite (Node >= 22.5). Two concrete reasons, both of
+// which we hit for real:
+//
+//   1. better-sqlite3 is a native addon compiled against a specific Node ABI.
+//      Upgrading Node breaks it with ERR_DLOPEN_FAILED / NODE_MODULE_VERSION
+//      mismatch, which is exactly the crash we saw on Node 24.
+//   2. Native .node binaries do not bundle reliably into a single-file sidecar
+//      executable, so the packaged MSI would ship a sidecar that dies on launch.
+//
+// node:sqlite has no addon to compile and no addon to bundle. The API is
+// compatible with the subset we use (prepare/run/get/all/exec, @named params),
+// so this is a genuine drop-in. better-sqlite3 remains the fallback for older Node.
+function openDatabase() {
+  try {
+    // eslint-disable-next-line n/no-unsupported-features/node-builtins
+    const { DatabaseSync } = require_("node:sqlite");
+    return { db: new DatabaseSync(dbPath), driver: "node:sqlite" };
+  } catch {
+    const Database = require_("better-sqlite3");
+    return { db: new Database(dbPath), driver: "better-sqlite3" };
+  }
+}
+
+const require_ = createRequire(import.meta.url);
+const { db, driver } = openDatabase();
+console.log(`[a11y-sidecar] storage: ${driver} (${dbPath})`);
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS sessions (
@@ -25,6 +52,16 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    level TEXT NOT NULL,          -- error | warning | info
+    source TEXT NOT NULL,         -- ai-report | expert-audit | scan | export | sidecar
+    message TEXT NOT NULL,
+    detail TEXT,                  -- stack, offending payload, model output excerpt
+    context TEXT                  -- JSON: url, provider, model, etc.
+  );
+  CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(timestamp DESC);
   CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp TEXT NOT NULL,
@@ -51,6 +88,45 @@ export const audit = {
   },
   list(limit = 100) {
     return db.prepare("SELECT * FROM audit ORDER BY id DESC LIMIT ?").all(limit);
+  },
+};
+
+export const logs = {
+  add({ level = "error", source = "sidecar", message, detail = null, context = null }) {
+    if (!message) return null;
+    const info = db.prepare(
+      `INSERT INTO logs (timestamp, level, source, message, detail, context)
+       VALUES (@timestamp, @level, @source, @message, @detail, @context)`
+    ).run({
+      timestamp: new Date().toISOString(),
+      level, source,
+      message: String(message).slice(0, 2000),
+      detail: detail ? String(detail).slice(0, 20000) : null,
+      context: context ? JSON.stringify(context).slice(0, 4000) : null,
+    });
+    return Number(info.lastInsertRowid);
+  },
+
+  list(limit = 200) {
+    return db.prepare(
+      `SELECT id, timestamp, level, source, message, detail, context
+       FROM logs ORDER BY id DESC LIMIT ?`
+    ).all(limit).map((r) => ({
+      ...r,
+      context: r.context ? JSON.parse(r.context) : null,
+    }));
+  },
+
+  unreadErrorCount(sinceId = 0) {
+    const r = db.prepare(
+      `SELECT COUNT(*) AS n FROM logs WHERE level = 'error' AND id > ?`
+    ).get(sinceId);
+    return r?.n ?? 0;
+  },
+
+  clear() {
+    db.prepare("DELETE FROM logs").run();
+    return true;
   },
 };
 

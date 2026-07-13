@@ -9,6 +9,10 @@
 //   GET  /session/status                      -> { open, url, title }
 //
 // Install:  npm i playwright axe-core express   &&   npx playwright install chromium
+// node:sqlite emits an ExperimentalWarning on every launch. It is stable enough
+// for our use and the warning only confuses users reading the app log.
+process.env.NODE_NO_WARNINGS = "1";
+
 import express from "express";
 import cors from "cors";
 import { chromium } from "playwright";
@@ -25,7 +29,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { runExpertAudit } from "./expert-audit.mjs";
 import { runCrossCheckAudit } from "./cross-check.mjs";
-import { sessions, settings, audit } from "./db.mjs";
+import { sessions, settings, audit, logs } from "./db.mjs";
 import { encrypt, decrypt, maskScan, assertProviderAllowed } from "./security.mjs";
 import { compareScans } from "./compare.mjs";
 
@@ -129,6 +133,8 @@ app.post("/scan/quick", async (_req, res) => {
       screenshot,
     });
   } catch (e) {
+    logs.add({ level: "error", source: "scan", message: String(e.message ?? e),
+               detail: e.stack, context: { url: page?.url?.() } });
     res.status(500).json({ ok: false, error: String(e) });
   }
 });
@@ -226,6 +232,9 @@ app.post("/audit/expert", async (req, res) => {
     res.json({ ok: true, audit: result });
   } catch (e) {
     audit.log("audit.expert", `failed: ${String(e.message ?? e).slice(0, 120)}`);
+    logs.add({ level: "error", source: "expert-audit", message: String(e.message ?? e),
+               detail: [e.raw ? "MODEL OUTPUT (truncated):\n" + e.raw : null, e.stack].filter(Boolean).join("\n\n"),
+               context: { url: page?.url?.(), provider: ai?.provider, model: ai?.model } });
     res.status(500).json({ ok: false, error: String(e.message ?? e) });
   } finally {
     expertRunning = false;
@@ -258,16 +267,65 @@ app.post("/scan/full/stop", (_req, res) => { crawler.stop(); res.json({ ok: true
 // ---- Phase 8: AI report ------------------------------------------------
 app.post("/report/ai", async (req, res) => {
   const { scan, ai } = req.body ?? {};
-  // eslint-disable-next-line no-unused-vars
   if (!scan?.violations) return res.status(400).json({ ok: false, error: "No scan data provided." });
+
+  let resolved;
   try {
-    const resolved = resolveAi(ai);
-    audit.log("report.ai.generate", `${resolved.provider}/${resolved.model}`);
-    const report = await generateAiReport(scan, resolved);
-    res.json({ ok: true, report });
+    resolved = resolveAi(ai);
   } catch (e) {
+    logs.add({ level: "error", source: "ai-report", message: String(e.message ?? e) });
+    return res.status(403).json({ ok: false, error: String(e.message ?? e) });
+  }
+
+  try {
+    audit.log("report.ai.generate", `${resolved.provider}/${resolved.model}`);
+    const { report, warnings, degraded } = await generateAiReport(scan, resolved);
+
+    // A model that emits one malformed snippet must not cost the user the whole
+    // report. We got a report back, so by definition nothing here was fatal —
+    // these are warnings, not errors. (Reserving "error" for genuine failures is
+    // what keeps the "check Logs" alert meaningful instead of crying wolf.)
+    for (const w of warnings ?? []) {
+      logs.add({
+        level: "warning",
+        source: "ai-report",
+        message: w.message,
+        detail: w.detail,
+        context: { url: scan.url, provider: resolved.provider, model: resolved.model, stage: w.stage },
+      });
+    }
+
+    res.json({ ok: true, report, degraded: !!degraded, warningCount: (warnings ?? []).length });
+  } catch (e) {
+    // Total failure — nothing salvageable. Record everything we know about it.
+    logs.add({
+      level: "error",
+      source: "ai-report",
+      message: String(e.message ?? e),
+      detail: [e.raw ? "MODEL OUTPUT (truncated):\n" + e.raw : null, e.stack].filter(Boolean).join("\n\n"),
+      context: { url: scan.url, provider: resolved.provider, model: resolved.model },
+    });
     res.status(500).json({ ok: false, error: String(e.message ?? e) });
   }
+});
+
+// ---- Logs ---------------------------------------------------------------
+app.get("/logs", (req, res) => {
+  res.json({ ok: true, logs: logs.list(Number(req.query.limit) || 200) });
+});
+
+app.delete("/logs", (_req, res) => {
+  logs.clear();
+  audit.log("logs.clear", "");
+  res.json({ ok: true });
+});
+
+// Lets the UI record client-side failures in the same place, so "check Logs"
+// means one place rather than two.
+app.post("/logs", (req, res) => {
+  const { level, source, message, detail, context } = req.body ?? {};
+  const id = logs.add({ level, source: source || "ui", message, detail, context });
+  res.json({ ok: !!id, id });
 });
 
 
@@ -315,6 +373,7 @@ app.post("/export", (req, res) => {
     audit.log("export", safe);
     res.json({ ok: true, path, dir: EXPORT_DIR });
   } catch (e) {
+    logs.add({ level: "error", source: "export", message: String(e.message ?? e), detail: e.stack });
     res.status(500).json({ ok: false, error: String(e.message ?? e) });
   }
 });

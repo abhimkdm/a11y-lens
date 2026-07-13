@@ -42,6 +42,7 @@ export default function ScanCenter() {
   };
   const [reportBusy, setReportBusy] = useState(false);
   const [expertBusy, setExpertBusy] = useState(false);
+  const [notice, setNotice] = useState("");
   const [expertScope, setExpertScope] = useState<"main" | "chrome" | "all">("main");
   const [crossCheck, setCrossCheck] = useState(false);
 
@@ -65,13 +66,21 @@ export default function ScanCenter() {
 
   const genReport = async () => {
     if (!currentScan) return;
-    setError(""); setReportBusy(true);
+    setError(""); setNotice(""); setReportBusy(true);
     const r = await api.aiReport(currentScan, aiProvider).catch((e) => ({ ok: false, error: String(e) }));
     setReportBusy(false);
     if (r.ok) {
       attachAiReport(r.report);
       persist({ ...(currentScan as NonNullable<typeof currentScan>), aiReport: r.report });
-    } else setError(r.error ?? "Report generation failed");
+      // The report came back, but the model's output was partly malformed and we
+      // recovered what we could. Say so plainly — and don't throw the report away.
+      if (r.degraded) {
+        setNotice(
+          "The report was generated, but part of the model's response was malformed and could not be " +
+          "recovered. What you see below is everything we could salvage — see Logs for the details."
+        );
+      }
+    } else setError(r.error ?? "Report generation failed — see Logs for details.");
   };
   const [overlayMsg, setOverlayMsg] = useState("");
   const [maxPages, setMaxPages] = useState(10);
@@ -437,6 +446,12 @@ export default function ScanCenter() {
             </Paper>
           )}
           {(reportBusy || expertBusy) && <LinearProgress sx={{ mb: 2 }} />}
+          {notice && (
+            <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setNotice("")}
+                   action={<Button color="inherit" size="small" href="#/logs">Check Logs</Button>}>
+              {notice}
+            </Alert>
+          )}
           {SHOW_EXPERT_AUDIT && expertBusy && (
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
               Capturing screenshot, DOM, accessibility tree and keyboard walk, then reviewing as an

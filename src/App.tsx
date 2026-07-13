@@ -3,17 +3,22 @@ import { ThemeProvider, CssBaseline, Box, Stack, Typography } from "@mui/materia
 import DashboardIcon from "@mui/icons-material/SpaceDashboard";
 import RadarIcon from "@mui/icons-material/Radar";
 import DescriptionIcon from "@mui/icons-material/Description";
+import BugReportIcon from "@mui/icons-material/BugReport";
 import SettingsIcon from "@mui/icons-material/Settings";
 import { theme } from "./theme/theme";
+import SidecarGate from "./components/SidecarGate";
+import ErrorBanner from "./components/ErrorBanner";
 import Dashboard from "./pages/Dashboard";
 import ScanCenter from "./pages/ScanCenter";
 import Reports from "./pages/Reports";
+import Logs from "./pages/Logs";
 import Settings from "./pages/Settings";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: <DashboardIcon fontSize="small" /> },
   { to: "/scan", label: "Scan Center", icon: <RadarIcon fontSize="small" /> },
   { to: "/reports", label: "Reports", icon: <DescriptionIcon fontSize="small" /> },
+  { to: "/logs", label: "Logs", icon: <BugReportIcon fontSize="small" /> },
   { to: "/settings", label: "Settings", icon: <SettingsIcon fontSize="small" /> },
 ];
 
@@ -21,6 +26,7 @@ export default function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
+      <SidecarGate>
       <HashRouter>
         <Box sx={{ display: "flex", minHeight: "100vh" }}>
           <Box component="nav" aria-label="Primary"
@@ -47,15 +53,18 @@ export default function App() {
             </Stack>
           </Box>
           <Box component="main" sx={{ flex: 1, p: 3.5, minWidth: 0 }}>
+            <ErrorBanner />
             <Routes>
               <Route path="/" element={<Dashboard />} />
               <Route path="/scan" element={<ScanCenter />} />
               <Route path="/reports" element={<Reports />} />
+              <Route path="/logs" element={<Logs />} />
               <Route path="/settings" element={<Settings />} />
             </Routes>
           </Box>
         </Box>
       </HashRouter>
+      </SidecarGate>
     </ThemeProvider>
   );
 }

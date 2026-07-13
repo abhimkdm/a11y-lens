@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "A11y Lens — AI Accessibility Testing",
+        "label": "main",
         "width": 1360,
         "height": 860,
         "minWidth": 1080,
@@ -23,14 +24,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ],
-    "externalBin": ["sidecar/a11y-sidecar"]
+    "targets": ["msi", "nsis", "dmg", "app"],
+    "externalBin": ["sidecar/a11y-sidecar"],
+    "windows": {
+      "webviewInstallMode": { "type": "downloadBootstrapper" }
+    }
   }
 }

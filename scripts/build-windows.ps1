@@ -21,7 +21,6 @@ param([switch]$SkipSidecar)
 
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
-. (Join-Path $PSScriptRoot "pkg-prereqs.ps1")
 
 function Assert-Tool {
   param([string]$Name, [string]$Hint)
@@ -48,13 +47,9 @@ npm i playwright axe-core express better-sqlite3
 
 if (-not $SkipSidecar) {
   Write-Host "[2/4] Compiling sidecar to a standalone exe..." -ForegroundColor Cyan
-  Add-GitUsrBinToPath
-  $pkgTarget = Get-PkgWinTarget
-  Write-Host ("  pkg target: {0}" -f $pkgTarget) -ForegroundColor DarkGray
-  # @yao-pkg/pkg 6.20.x uses pkg-fetch 3.5.x whose prebuilt binaries are published.
-  npx pkg sidecar/server.mjs `
-    --targets $pkgTarget `
-    --output "src-tauri/sidecar/a11y-sidecar-x86_64-pc-windows-msvc.exe"
+  # Uses Node's built-in SQLite, so there is no native addon to bundle and the
+  # packaged sidecar runs on any machine regardless of its Node version.
+  npm run sidecar:build
   if ($LASTEXITCODE -ne 0) {
     Write-Host "Sidecar compile failed." -ForegroundColor Red
     exit 1
