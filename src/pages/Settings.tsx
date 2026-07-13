@@ -6,6 +6,7 @@ import {
 import LockIcon from "@mui/icons-material/Lock";
 import { api } from "../services/api";
 import { useAppStore } from "../store/useAppStore";
+import ContactCard from "../components/ContactCard";
 
 const PROVIDERS = ["ollama", "openai", "claude", "gemini", "kimi"];
 
@@ -229,6 +230,8 @@ export default function Settings() {
           ))}
         </Stack>
       </Paper>
+
+      <ContactCard />
     </Stack>
   );
 }
