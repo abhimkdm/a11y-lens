@@ -80,6 +80,20 @@ export const sessions = {
     return r ? JSON.parse(r.data) : null;
   },
 
+  update(id, scan) {
+    const info = db.prepare(
+      `UPDATE sessions SET url=@url, title=@title, score=@score, counts=@counts, data=@data WHERE id=@id`
+    ).run({
+      id,
+      url: scan.url,
+      title: scan.title ?? "",
+      score: scan.score ?? 0,
+      counts: JSON.stringify(scan.counts ?? {}),
+      data: JSON.stringify(scan),
+    });
+    return info.changes > 0;
+  },
+
   remove(id) {
     return db.prepare(`DELETE FROM sessions WHERE id = ?`).run(id).changes > 0;
   },

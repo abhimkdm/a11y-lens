@@ -25,12 +25,35 @@ interface Comparison {
   summary: { fixed: number; added: number; regressions: number };
 }
 
-function save(name: string, content: string, type: string) {
+// Saving a file is genuinely different in the two environments this app runs in:
+//
+//   Tauri desktop  — the webview (WebView2 / WKWebView) does NOT honour
+//                    <a download> on a blob: URL. The click silently does
+//                    nothing. This is why exports appeared broken.
+//   Browser (dev)  — <a download> works, but only if the anchor is actually in
+//                    the DOM and the blob URL isn't revoked before the download
+//                    starts reading it.
+//
+// So: ask the sidecar to write the file with Node (reliable everywhere), and
+// only fall back to the blob trick if the sidecar isn't reachable.
+async function save(name: string, content: string, type: string): Promise<string | null> {
+  const r = await api.exportFile(name, content).catch(() => null);
+  if (r?.ok) return r.path as string;
+
+  // Fallback: browser download, done correctly.
+  const url = URL.createObjectURL(new Blob([content], { type }));
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([content], { type }));
+  a.href = url;
   a.download = name;
+  a.style.display = "none";
+  document.body.appendChild(a);   // must be in the DOM for some engines
   a.click();
-  URL.revokeObjectURL(a.href);
+  // Give the download a tick to start before revoking the blob.
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+    a.remove();
+  }, 2000);
+  return null;
 }
 
 function DiffList({ title, items, tone }: { title: string; items: DiffItem[]; tone: string }) {
@@ -61,6 +84,7 @@ export default function Reports() {
   const [selected, setSelected] = useState<number[]>([]);
   const [cmp, setCmp] = useState<Comparison | null>(null);
   const [error, setError] = useState("");
+  const [saved, setSaved] = useState("");
   const [offline, setOffline] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -82,11 +106,19 @@ export default function Reports() {
   };
 
   const exportSession = async (row: SessionRow, kind: "html" | "session") => {
+    setError(""); setSaved("");
     const r = await api.getSession(row.id).catch(() => null);
-    if (!r?.ok) { setError("Could not load session."); return; }
+    if (!r?.ok) { setError("Could not load session. Is the sidecar running?"); return; }
     const base = `a11y-lens_${row.timestamp.slice(0, 19).replace(/[:T]/g, "-")}`;
-    if (kind === "html") save(`${base}.html`, buildHtmlReport(r.scan), "text/html");
-    else save(`${base}.a11ysession.json`, JSON.stringify({ format: "a11y-lens-session", version: 1, scan: r.scan }, null, 2), "application/json");
+    const path =
+      kind === "html"
+        ? await save(`${base}.html`, buildHtmlReport(r.scan), "text/html")
+        : await save(
+            `${base}.a11ysession.json`,
+            JSON.stringify({ format: "a11y-lens-session", version: 1, scan: r.scan }, null, 2),
+            "application/json"
+          );
+    if (path) setSaved(path);
   };
 
   const importFile = async (f: File) => {
@@ -119,6 +151,11 @@ export default function Reports() {
 
       {offline && <Alert severity="warning">Sidecar not reachable — start it with <code>npm run sidecar</code> to see saved sessions.</Alert>}
       {error && <Alert severity="error">{error}</Alert>}
+      {saved && (
+        <Alert severity="success" onClose={() => setSaved("")}>
+          Saved to <code>{saved}</code>
+        </Alert>
+      )}
       {!offline && !rows.length && (
         <Typography color="text.secondary" sx={{ p: 3 }}>
           No sessions yet. Every scan is saved here automatically.

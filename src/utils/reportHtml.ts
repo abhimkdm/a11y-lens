@@ -6,6 +6,8 @@ export function buildHtmlReport(s: ScanResult): string {
   const data = JSON.stringify({
     url: s.url, title: s.title, timestamp: s.timestamp, score: s.score,
     counts: s.counts, violations: s.violations, aiReport: s.aiReport ?? null,
+    expertAudit: s.expertAudit ?? null,
+    screenshot: s.screenshot ?? null,
   }).replace(/</g, "\\u003c");
 
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -52,6 +54,8 @@ button:focus-visible,summary:focus-visible{outline:2px solid var(--minor);outlin
   <button data-f="critical">critical</button><button data-f="serious">serious</button>
   <button data-f="moderate">moderate</button><button data-f="minor">minor</button>
 </div>
+<div id="shot"></div>
+<div id="expert"></div>
 <div id="ai"></div>
 <div id="list"></div></div>
 <script>
@@ -63,6 +67,28 @@ document.getElementById("scoreNum").textContent=D.score;
 const arc=document.getElementById("arc"),c=2*Math.PI*50;
 arc.setAttribute("stroke",D.score>=90?"#7BE8B0":D.score>=70?"#FFD966":"#FF7B7B");
 arc.setAttribute("stroke-dasharray",c);arc.setAttribute("stroke-dashoffset",c*(1-D.score/100));
+if(D.screenshot){
+  document.getElementById("shot").innerHTML =
+    '<details style="margin-bottom:14px"><summary><strong>Page screenshot</strong>'+
+    '<span class="muted" style="margin-left:auto">visual evidence at scan time</span></summary>'+
+    '<div class="body"><img src="data:image/jpeg;base64,'+D.screenshot+'" '+
+    'alt="Screenshot of the scanned page" style="max-width:100%;border-radius:8px;border:1px solid #9aa7b433"></div></details>';
+}
+if(D.expertAudit){
+  const E=D.expertAudit, x=document.getElementById("expert");
+  x.innerHTML='<details open style="margin-bottom:14px"><summary><strong>AI Expert Audit</strong>'+
+  '<span class="muted" style="margin-left:auto">'+esc(E.provider)+' · '+E.stats.verified+'/'+E.stats.total+' evidence-verified</span></summary>'+
+  '<div class="body"><p class="muted">Findings automated scanners structurally cannot detect. '+
+  'Each finding is checked against the captured DOM / accessibility tree / keyboard walk: '+
+  '<strong>verified</strong> = the quote was found verbatim; <strong>unverified</strong> = confirm manually.</p>'+
+  E.findings.map(f=>'<div style="margin-bottom:14px"><span class="pill" style="color:'+col[f.severity]+';border-color:'+col[f.severity]+'55;background:'+col[f.severity]+'18">'+f.severity+'</span> '+
+  '<span class="pill" style="color:'+(f.evidenceStatus==="verified"?"#7BE8B0":"#FFB35C")+';border-color:'+(f.evidenceStatus==="verified"?"#7BE8B0":"#FFB35C")+'55">'+f.evidenceStatus+'</span> '+
+  '<strong>'+esc(f.title)+'</strong> <span class="muted">'+esc(f.zone)+' · '+esc((f.wcag||[]).join(", "))+'</span>'+
+  '<p>'+esc(f.description)+'</p><p class="muted">Impact: '+esc(f.userImpact)+'</p>'+
+  '<pre>EVIDENCE: '+esc(f.evidence)+'</pre><pre>FIX: '+esc(f.fix)+'</pre></div>').join("")+
+  (E.passes && E.passes.length ? '<div class="muted">What works</div>'+E.passes.map(p=>'<p>\u2713 <strong>'+esc(p.zone)+':</strong> '+esc(p.message)+'</p>').join("") : "")+
+  '</div></details>';
+}
 if(D.aiReport){
   const a=document.getElementById("ai");
   a.innerHTML='<details open style="margin-bottom:14px"><summary><strong>AI Report</strong>'+

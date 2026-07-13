@@ -72,6 +72,20 @@ export const api = {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scan }),
     }),
+  updateSession: (id: number, scan: unknown) =>
+    req(`${BASE}/sessions/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scan }),
+    }),
+
+  exportFile: (filename: string, content: string) =>
+    req(`${BASE}/export`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ filename, content }),
+    }),
+
   deleteSession: (id: number) =>
     req(`${BASE}/sessions/${id}`, { method: "DELETE" }),
   importSession: (scan: unknown) =>
@@ -83,6 +97,37 @@ export const api = {
     req(`${BASE}/compare`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prevId, currId }),
+    }),
+
+  expertAudit: (
+    ai: { provider: string; model: string; apiKey: string; baseUrl?: string },
+    axeViolations: unknown[],
+    opts: {
+      scope?: "main" | "chrome" | "all";
+      probes?: boolean;
+      keyboardWalk?: boolean;
+      mode?: "single" | "cross-check";
+    } = {}
+  ) =>
+    req(`${BASE}/audit/expert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ai,
+        axeViolations,
+        scope: opts.scope ?? "main",
+        probes: opts.probes !== false,
+        keyboardWalk: opts.keyboardWalk !== false,
+        mode: opts.mode ?? "single",
+      }),
+    }),
+
+  getCrossCheckSettings: () => req(`${BASE}/settings/ai/crosscheck`),
+  saveCrossCheckSettings: (cfg: { provider: string; model: string; apiKey: string; baseUrl?: string }) =>
+    req(`${BASE}/settings/ai/crosscheck`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cfg),
     }),
 
   getAiSettings: () => req(`${BASE}/settings/ai`),
@@ -99,7 +144,7 @@ export const api = {
       body: JSON.stringify(cfg),
     }),
   getSecurity: () => req(`${BASE}/settings/security`),
-  saveSecurity: (cfg: { localOnly?: boolean; masking?: boolean }) =>
+  saveSecurity: (cfg: { localOnly?: boolean; masking?: boolean; storeScreenshots?: boolean }) =>
     req(`${BASE}/settings/security`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(cfg),

@@ -95,7 +95,14 @@ export function createCrawler() {
     await page.evaluate(axeSource);
     const results = await page.evaluate(async () =>
       window.axe.run(document, {
-        runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"] },
+        runOnly: {
+          type: "tag",
+          // WCAG 2.1 Level A + AA only — the target standard.
+          // "best-practice" is deliberately excluded: those rules are good advice
+          // but are NOT WCAG conformance failures, and mixing them in overstates
+          // the violation count against WCAG 2.1.
+          values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"],
+        },
         resultTypes: ["violations"],
       })
     );

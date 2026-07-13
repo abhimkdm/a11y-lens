@@ -16,7 +16,52 @@ export interface AiReport {
   fixes: AiFix[]; quickWins: string[];
   generatedAt: string; provider: string;
 }
+export type Agreement = "consensus" | "confirmed" | "single" | "deterministic";
+export interface ExpertFinding {
+  zone: string; title: string; severity: Severity;
+  description: string; userImpact: string; fix: string;
+  evidence: string; wcag: string[];
+  evidenceStatus: "verified" | "unverified";
+  source?: "probe" | "ai";
+  outOfScopeWcag?: string[];
+  agreement?: Agreement;
+  agreedBy?: string[];
+  confidence?: number;
+  adjudication?: { by: string; verdict: string; reason: string } | null;
+}
+export interface ExpertPass { zone: string; message: string }
+export interface ExpertAudit {
+  url: string; title: string; generatedAt: string; provider: string;
+  findings: ExpertFinding[];
+  passes: ExpertPass[];
+  counts: Record<Severity, number>;
+  durationMs?: number;
+  scope?: string;
+  mode?: "single" | "cross-check";
+  agentA?: string;
+  agentB?: string;
+  cost?: { usd: number | null; inputTokens: number; outputTokens: number; note?: string; pricedAs?: string };
+  stats: {
+    total: number; verified: number; unverified: number;
+    fromProbes?: number; fromAi?: number;
+    suppressedRules: string[]; droppedAsScannerDuplicate: number;
+    keyboardWalkSteps: number; domTruncated: boolean;
+    ariaTreeAvailable: boolean; screenshotIncluded: boolean;
+    focusProbeChecked?: number; focusProbeMissing?: number;
+    standard?: string;
+    wcagRemappedFrom22?: number;
+    droppedOutOfWcag21Scope?: number;
+    trusted?: number;
+    needsReview?: number;
+    agreementRate?: number;
+    agentARaw?: number;
+    agentBRaw?: number;
+    tiers?: { deterministic: number; consensus: number; confirmed: number; single: number };
+  };
+}
+
 export interface ScanResult {
+  id?: number;                 // SQLite session id, set once persisted
   url: string; title: string; timestamp: string; score: number;
   counts: Record<Severity, number>;
   violations: Violation[];
@@ -24,6 +69,7 @@ export interface ScanResult {
   keyboardFindings?: { type: string; target: string; html: string }[];
   pages?: { url: string; title: string; score: number; violationRuleCount: number }[];
   aiReport?: AiReport;
+  expertAudit?: ExpertAudit;
 }
 
 interface AppState {
@@ -36,7 +82,9 @@ interface AppState {
   setSessionOpen: (v: boolean) => void;
   setScanning: (v: AppState["scanning"]) => void;
   setScan: (r: ScanResult) => void;
+  setScanId: (id: number) => void;
   attachAiReport: (rep: AiReport) => void;
+  attachExpertAudit: (a: ExpertAudit) => void;
   ignoreRule: (ruleId: string, reason: string, expiry?: string) => void;
   unignoreRule: (ruleId: string) => void;
   setAiProvider: (p: Partial<AppState["aiProvider"]>) => void;
@@ -52,10 +100,22 @@ export const useAppStore = create<AppState>((set) => ({
   setSessionOpen: (v) => set({ sessionOpen: v }),
   setScanning: (v) => set({ scanning: v }),
   setScan: (r) => set((s) => ({ currentScan: r, history: [r, ...s.history].slice(0, 50) })),
+  setScanId: (id) =>
+    set((s) => {
+      if (!s.currentScan) return {};
+      const updated = { ...s.currentScan, id };
+      return { currentScan: updated, history: [updated, ...s.history.slice(1)] };
+    }),
   attachAiReport: (rep) =>
     set((s) => {
       if (!s.currentScan) return {};
       const updated = { ...s.currentScan, aiReport: rep };
+      return { currentScan: updated, history: [updated, ...s.history.slice(1)] };
+    }),
+  attachExpertAudit: (a) =>
+    set((s) => {
+      if (!s.currentScan) return {};
+      const updated = { ...s.currentScan, expertAudit: a };
       return { currentScan: updated, history: [updated, ...s.history.slice(1)] };
     }),
   ignoreRule: (ruleId, reason, expiry) =>

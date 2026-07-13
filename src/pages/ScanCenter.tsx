@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Paper, Typography, Stack, Button, TextField, Alert, LinearProgress, Grid2 as Grid, Chip, Box,
-  Checkbox, FormControlLabel,
+  Checkbox, FormControlLabel, MenuItem, Tooltip,
 } from "@mui/material";
 import BoltIcon from "@mui/icons-material/Bolt";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
@@ -13,25 +13,65 @@ import ConstructionIcon from "@mui/icons-material/Construction";
 import StopCircleIcon from "@mui/icons-material/StopCircle";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import FiberManualRecordIcon from "@mui/icons-material/FiberManualRecord";
+import PsychologyIcon from "@mui/icons-material/Psychology";
 import { api } from "../services/api";
 import { useAppStore } from "../store/useAppStore";
 import ViolationList from "../components/ViolationList";
 import AiReportPanel from "../components/AiReportPanel";
+import ExpertAuditPanel from "../components/ExpertAuditPanel";
 import ScoreRing from "../components/ScoreRing";
+
+// Feature flag — the AI Expert Audit (incl. cross-check, probes, scope selector)
+// is fully built and tested but hidden from the UI for now. Flip to `true` to
+// bring back the scope selector, the Cross-check checkbox and the audit button.
+// Everything behind it (sidecar endpoints, panel, persistence) is left intact.
+const SHOW_EXPERT_AUDIT = false;
 
 export default function ScanCenter() {
   const [url, setUrl] = useState("https://");
   const [error, setError] = useState("");
-  const { sessionOpen, setSessionOpen, scanning, setScanning, currentScan, setScan, ignored, aiProvider, attachAiReport } = useAppStore();
+  const { sessionOpen, setSessionOpen, scanning, setScanning, currentScan, setScan, ignored, aiProvider, attachAiReport, attachExpertAudit, setScanId } = useAppStore();
+
+  // An AI report / expert audit is produced AFTER the scan is first saved. Without
+  // writing it back, the stored session (and therefore every export from Reports)
+  // would be missing the AI sections entirely.
+  const persist = (scan: typeof currentScan) => {
+    if (!scan) return;
+    if (scan.id) api.updateSession(scan.id, scan).catch(() => {});
+    else api.saveSession(scan).then((r) => r?.ok && setScanId(r.id)).catch(() => {});
+  };
   const [reportBusy, setReportBusy] = useState(false);
+  const [expertBusy, setExpertBusy] = useState(false);
+  const [expertScope, setExpertScope] = useState<"main" | "chrome" | "all">("main");
+  const [crossCheck, setCrossCheck] = useState(false);
+
+  // The expert audit's whole value is finding what axe CANNOT. So we hand it
+  // this page's live axe violations as a suppression list — it then spends its
+  // entire budget on what the scanner structurally can't see.
+  const expertAudit = async () => {
+    setError(""); setExpertBusy(true);
+    const r = await api
+      .expertAudit(aiProvider, currentScan?.violations ?? [], {
+        scope: expertScope,
+        mode: crossCheck ? "cross-check" : "single",
+      })
+      .catch((e) => ({ ok: false, error: String(e) }));
+    setExpertBusy(false);
+    if (r.ok) {
+      attachExpertAudit(r.audit);
+      persist({ ...(currentScan as NonNullable<typeof currentScan>), expertAudit: r.audit });
+    } else setError(r.error ?? "Expert audit failed");
+  };
 
   const genReport = async () => {
     if (!currentScan) return;
     setError(""); setReportBusy(true);
     const r = await api.aiReport(currentScan, aiProvider).catch((e) => ({ ok: false, error: String(e) }));
     setReportBusy(false);
-    if (r.ok) attachAiReport(r.report);
-    else setError(r.error ?? "Report generation failed");
+    if (r.ok) {
+      attachAiReport(r.report);
+      persist({ ...(currentScan as NonNullable<typeof currentScan>), aiReport: r.report });
+    } else setError(r.error ?? "Report generation failed");
   };
   const [overlayMsg, setOverlayMsg] = useState("");
   const [maxPages, setMaxPages] = useState(10);
@@ -134,7 +174,10 @@ export default function ScanCenter() {
       if (!st.running) {
         stopPolling(); setScanning("idle");
         if (st.error) setError(st.error);
-        if (st.result) { setScan(st.result); api.saveSession(st.result).catch(() => {}); }
+        if (st.result) {
+          setScan(st.result);
+          api.saveSession(st.result).then((res) => res?.ok && setScanId(res.id)).catch(() => {});
+        }
       }
     }, 1500);
   };
@@ -172,7 +215,10 @@ export default function ScanCenter() {
     setError(""); setScanning("quick");
     const r = await api.quickScan().catch((e) => ({ ok: false, error: String(e) }));
     setScanning("idle");
-    if (r.ok) { setScan(r); api.saveSession(r).catch(() => {}); }
+    if (r.ok) {
+      setScan(r);
+      api.saveSession(r).then((res) => res?.ok && setScanId(res.id)).catch(() => {});
+    }
     else setError(r.error ?? "Scan failed");
   };
 
@@ -346,6 +392,28 @@ export default function ScanCenter() {
                       disabled={!sessionOpen}>
                 Clear
               </Button>
+              {SHOW_EXPERT_AUDIT && (
+                <>
+                  <TextField select size="small" value={expertScope} label="Audit scope"
+                             onChange={(e) => setExpertScope(e.target.value as "main" | "chrome" | "all")}
+                             sx={{ width: 150 }}>
+                    <MenuItem value="main">Main content</MenuItem>
+                    <MenuItem value="chrome">Site chrome</MenuItem>
+                    <MenuItem value="all">Everything</MenuItem>
+                  </TextField>
+                  <Tooltip title="Runs two different models against identical evidence and reconciles them into consensus / confirmed / needs-review tiers. Roughly 2x the cost, but tells you which findings to trust.">
+                    <FormControlLabel
+                      control={<Checkbox size="small" checked={crossCheck}
+                                         onChange={(e) => setCrossCheck(e.target.checked)} />}
+                      label={<Typography variant="body2">Cross-check</Typography>}
+                    />
+                  </Tooltip>
+                  <Button variant="outlined" color="secondary" startIcon={<PsychologyIcon />}
+                          onClick={expertAudit} disabled={expertBusy || !sessionOpen}>
+                    {expertBusy ? "Auditing…" : crossCheck ? "AI Expert Audit ×2" : "AI Expert Audit"}
+                  </Button>
+                </>
+              )}
               <Button variant="contained" color="secondary" startIcon={<AutoAwesomeIcon />}
                       onClick={genReport} disabled={reportBusy}>
                 {reportBusy ? "Generating…" : "Generate AI Report"}
@@ -368,7 +436,17 @@ export default function ScanCenter() {
               </Stack>
             </Paper>
           )}
-          {reportBusy && <LinearProgress sx={{ mb: 2 }} />}
+          {(reportBusy || expertBusy) && <LinearProgress sx={{ mb: 2 }} />}
+          {SHOW_EXPERT_AUDIT && expertBusy && (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Capturing screenshot, DOM, accessibility tree and keyboard walk, then reviewing as an
+              expert would — this takes longer than a scan.
+              {crossCheck && " Cross-check runs two models and reconciles them, so expect roughly double the time."}
+            </Typography>
+          )}
+          {SHOW_EXPERT_AUDIT && currentScan.expertAudit && (
+            <Box sx={{ mb: 2 }}><ExpertAuditPanel audit={currentScan.expertAudit} /></Box>
+          )}
           {currentScan.aiReport && (
             <Box sx={{ mb: 2 }}><AiReportPanel report={currentScan.aiReport} /></Box>
           )}

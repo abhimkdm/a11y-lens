@@ -20,6 +20,11 @@ import { createCrawler } from "./crawler.mjs";
 import { generateAiReport } from "./report.mjs";
 import { AI_PROVIDER_DEFAULTS, aiChat } from "./ai.mjs";
 import { createRecorder } from "./recorder.mjs";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { runExpertAudit } from "./expert-audit.mjs";
+import { runCrossCheckAudit } from "./cross-check.mjs";
 import { sessions, settings, audit } from "./db.mjs";
 import { encrypt, decrypt, maskScan, assertProviderAllowed } from "./security.mjs";
 import { compareScans } from "./compare.mjs";
@@ -87,7 +92,14 @@ app.post("/scan/quick", async (_req, res) => {
     await page.evaluate(axeSource);
     const results = await page.evaluate(async () => {
       return await window.axe.run(document, {
-        runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"] },
+        runOnly: {
+          type: "tag",
+          // WCAG 2.1 Level A + AA only — the target standard.
+          // "best-practice" is deliberately excluded: those rules are good advice
+          // but are NOT WCAG conformance failures, and mixing them in overstates
+          // the violation count against WCAG 2.1.
+          values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"],
+        },
         resultTypes: ["violations", "incomplete"],
       });
     });
@@ -167,6 +179,59 @@ app.post("/overlay/clear", async (_req, res) => {
 });
 
 
+// ---- AI Expert Audit ---------------------------------------------------
+// The complement to the axe pass: finds what scanners structurally cannot see
+// (meaningful names, focus management, state exposure, visual-vs-programmatic
+// mismatch). Runs against whatever page the existing session already has open —
+// no separate navigation, no hardcoded paths.
+let expertRunning = false;
+
+app.post("/audit/expert", async (req, res) => {
+  if (!page) return res.status(400).json({ ok: false, error: "No browser session. Open one and log in first." });
+  if (expertRunning) return res.status(409).json({ ok: false, error: "An expert audit is already running." });
+
+  let ai;
+  try { ai = resolveAi(req.body?.ai); } catch (e) { return res.status(403).json({ ok: false, error: String(e.message ?? e) }); }
+
+  expertRunning = true;
+  const started = Date.now();
+  try {
+    // Feed the model this page's real scanner results so it never re-reports
+    // what axe already caught. Falls back to an empty list if no scan has run.
+    const axeViolations = Array.isArray(req.body?.axeViolations) ? req.body.axeViolations : [];
+    audit.log("audit.expert", `${ai.provider}/${ai.model} on ${page.url()}`);
+
+    const common = {
+      axeViolations,
+      keyboardWalk: req.body?.keyboardWalk !== false,
+      scope: req.body?.scope ?? "main",      // main | chrome | all
+      probes: req.body?.probes !== false,    // deterministic focus + zoom/reflow probes
+    };
+
+    let result;
+    if (req.body?.mode === "cross-check") {
+      const aiB = resolveAiB(req.body?.aiB);
+      if (!aiB) {
+        return res.status(400).json({
+          ok: false,
+          error: "Cross-check needs a second model. Configure the cross-check agent in Settings — ideally a different provider family than your primary.",
+        });
+      }
+      audit.log("audit.expert.crosscheck", `${ai.provider}/${ai.model} + ${aiB.provider}/${aiB.model}`);
+      result = await runCrossCheckAudit(page, { aiA: ai, aiB, ...common });
+    } else {
+      result = await runExpertAudit(page, { ai, ...common });
+    }
+    result.durationMs = Date.now() - started;
+    res.json({ ok: true, audit: result });
+  } catch (e) {
+    audit.log("audit.expert", `failed: ${String(e.message ?? e).slice(0, 120)}`);
+    res.status(500).json({ ok: false, error: String(e.message ?? e) });
+  } finally {
+    expertRunning = false;
+  }
+});
+
 // ---- Phase 6: AI Full Scan --------------------------------------------
 app.post("/scan/full/start", (req, res) => {
   if (!page) return res.status(400).json({ ok: false, error: "No browser session. Open one and log in first." });
@@ -217,7 +282,8 @@ app.get("/sessions/:id", (req, res) => {
 app.post("/sessions", (req, res) => {
   let scan = req.body?.scan;
   if (!scan?.url || !scan?.timestamp) return res.status(400).json({ ok: false, error: "Invalid scan payload." });
-  if (securityConfig().masking) scan = maskScan(scan);
+  const cfg = securityConfig();
+  if (cfg.masking) scan = maskScan(scan, { storeScreenshots: cfg.storeScreenshots });
   audit.log("session.save", scan.url);
   res.json({ ok: true, id: sessions.save(scan) });
 });
@@ -227,12 +293,54 @@ app.delete("/sessions/:id", (req, res) => {
   res.json({ ok: sessions.remove(+req.params.id) });
 });
 
+
+// ---- Export -------------------------------------------------------------
+// Tauri's webview (WebView2 / WKWebView) does NOT honour <a download> on blob
+// URLs, so the browser-style download trick silently does nothing in the
+// packaged app. The reliable path is: the UI posts the content here, the
+// sidecar writes it to disk with Node, and we hand back the absolute path.
+const EXPORT_DIR = process.env.A11Y_EXPORT_DIR || join(homedir(), "A11yLens", "reports");
+
+app.post("/export", (req, res) => {
+  const { filename, content } = req.body ?? {};
+  if (!filename || typeof content !== "string") {
+    return res.status(400).json({ ok: false, error: "filename and content are required." });
+  }
+  // Never let a filename escape the export directory.
+  const safe = String(filename).replace(/[/\\]/g, "_").replace(/\.\./g, "_");
+  try {
+    mkdirSync(EXPORT_DIR, { recursive: true });
+    const path = join(EXPORT_DIR, safe);
+    writeFileSync(path, content, "utf8");
+    audit.log("export", safe);
+    res.json({ ok: true, path, dir: EXPORT_DIR });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message ?? e) });
+  }
+});
+
+// ---- Update an existing session -----------------------------------------
+// An AI report or expert audit is attached AFTER the scan is first saved, so
+// without this the SQLite row keeps the original scan and every export comes
+// out missing the AI sections.
+app.put("/sessions/:id", (req, res) => {
+  let scan = req.body?.scan;
+  if (!scan?.url) return res.status(400).json({ ok: false, error: "Invalid scan payload." });
+  const cfg = securityConfig();
+  if (cfg.masking) scan = maskScan(scan, { storeScreenshots: cfg.storeScreenshots });
+  const ok = sessions.update(+req.params.id, scan);
+  if (!ok) return res.status(404).json({ ok: false, error: "Session not found." });
+  audit.log("session.update", `${req.params.id} ${scan.url}`);
+  res.json({ ok: true, id: +req.params.id });
+});
+
 // ---- Phase 11: import (export is a client-side file download) ---------
 app.post("/sessions/import", (req, res) => {
   const scan = req.body?.scan;
   if (!scan?.url || !scan?.violations) return res.status(400).json({ ok: false, error: "Not a valid A11y Lens session file." });
   audit.log("session.import", scan.url);
-  res.json({ ok: true, id: sessions.save(securityConfig().masking ? maskScan(scan) : scan) });
+  const cfgImp = securityConfig();
+  res.json({ ok: true, id: sessions.save(cfgImp.masking ? maskScan(scan, { storeScreenshots: cfgImp.storeScreenshots }) : scan) });
 });
 
 // ---- Phase 13: comparison ----------------------------------------------
@@ -246,7 +354,7 @@ app.post("/compare", (req, res) => {
 
 // ---- Phase 15: security ------------------------------------------------
 function securityConfig() {
-  return settings.get("security") ?? { localOnly: false, masking: true };
+  return { localOnly: false, masking: true, storeScreenshots: false, ...(settings.get("security") ?? {}) };
 }
 
 // Resolve the AI config for a request: stored encrypted key wins over a
@@ -264,6 +372,40 @@ function resolveAi(reqAi) {
   assertProviderAllowed(ai.provider, securityConfig().localOnly);
   return ai;
 }
+
+// The cross-check agent. Deliberately a SEPARATE stored config: agreement
+// between two models of the same family proves much less than agreement across
+// families, so the second model should usually be a different provider.
+function resolveAiB(reqAi) {
+  const stored = settings.get("aiB");
+  const provider = reqAi?.provider || stored?.provider;
+  if (!provider) return null;
+  const defaults = AI_PROVIDER_DEFAULTS[provider] ?? {};
+  const ai = {
+    provider,
+    model: reqAi?.model || stored?.model || defaults.model,
+    baseUrl: reqAi?.baseUrl || stored?.baseUrl || defaults.baseUrl,
+    apiKey: stored?.apiKeyEnc ? decrypt(stored.apiKeyEnc) : reqAi?.apiKey,
+  };
+  assertProviderAllowed(ai.provider, securityConfig().localOnly);
+  return ai;
+}
+
+app.get("/settings/ai/crosscheck", (_req, res) => {
+  const s = settings.get("aiB") ?? {};
+  res.json({ ok: true, provider: s.provider ?? "", model: s.model ?? "", baseUrl: s.baseUrl ?? "", hasKey: !!s.apiKeyEnc });
+});
+
+app.post("/settings/ai/crosscheck", (req, res) => {
+  const { provider, model, apiKey, baseUrl } = req.body ?? {};
+  const prev = settings.get("aiB") ?? {};
+  settings.set("aiB", {
+    provider, model, baseUrl,
+    apiKeyEnc: apiKey ? encrypt(apiKey) : prev.apiKeyEnc,
+  });
+  audit.log("settings.aiB.update", `${provider}/${model}`);
+  res.json({ ok: true });
+});
 
 app.get("/settings/ai", (_req, res) => {
   const s = settings.get("ai") ?? {};

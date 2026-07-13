@@ -57,14 +57,17 @@ export function maskText(text) {
   return t;
 }
 
-export function maskScan(scan) {
+export function maskScan(scan, { storeScreenshots = false } = {}) {
   const clone = JSON.parse(JSON.stringify(scan));
   for (const v of clone.violations ?? [])
     for (const n of v.nodes ?? []) {
       if (n.html) n.html = maskText(n.html);
       if (n.failureSummary) n.failureSummary = maskText(n.failureSummary);
     }
-  delete clone.screenshot; // screenshots can contain anything on screen
+  // A full-page screenshot of a logged-in enterprise app can contain customer
+  // names, addresses and order data. Dropping it is the safe default; keeping it
+  // is an explicit, informed opt-in.
+  if (!storeScreenshots) delete clone.screenshot;
   return clone;
 }
 
