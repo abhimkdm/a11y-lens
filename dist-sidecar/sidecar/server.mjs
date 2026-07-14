@@ -1,0 +1,608 @@
+// A11y Lens sidecar — Playwright + axe-core automation layer.
+// Runs as a local HTTP server the Tauri/React app talks to.
+//
+//   POST /session/open     { url }            -> launches headed Chromium, user logs in manually
+//   POST /scan/quick       { }                -> injects axe-core into the CURRENT page, returns violations
+//   POST /scan/keyboard    { }                -> tab-order + focus-visibility audit of current page
+//   POST /overlay/show     { violations }     -> draw markers + tooltips on the live page
+//   POST /overlay/clear                       -> remove overlay
+//   GET  /session/status                      -> { open, url, title }
+//
+// Install:  npm i playwright axe-core express   &&   npx playwright install chromium
+// node:sqlite emits an ExperimentalWarning on every launch. It is stable enough
+// for our use and the warning only confuses users reading the app log.
+process.env.NODE_NO_WARNINGS = "1";
+
+import express from "express";
+import cors from "cors";
+import { chromium } from "playwright";
+import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
+import { OVERLAY_SOURCE } from "./overlay.mjs";
+import { TOOLBAR_SOURCE } from "./toolbar.mjs";
+import { createCrawler } from "./crawler.mjs";
+import { generateAiReport } from "./report.mjs";
+import { AI_PROVIDER_DEFAULTS, aiChat } from "./ai.mjs";
+import { createRecorder } from "./recorder.mjs";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { runExpertAudit } from "./expert-audit.mjs";
+import { runCrossCheckAudit } from "./cross-check.mjs";
+import { captureElementScreenshots, installHighlighter } from "./element-shots.mjs";
+import { sessions, settings, audit, logs } from "./db.mjs";
+import { encrypt, decrypt, maskScan, assertProviderAllowed } from "./security.mjs";
+import { compareScans } from "./compare.mjs";
+
+const require = createRequire(import.meta.url);
+const axeSource = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
+
+const app = express();
+app.use(cors());               // allow the Tauri webview / dev server to call this local API
+app.use(express.json({ limit: "40mb" }));
+
+let browser = null;
+let page = null;
+const crawler = createCrawler();
+const recorder = createRecorder();
+
+app.post("/session/open", async (req, res) => {
+  try {
+    if (recorder.state.active) recorder.stop(); // avoid a dangling listener on the old page object
+    if (!browser) {
+      browser = await chromium.launch({ headless: false, channel: "chrome" })
+        .catch(() => chromium.launch({ headless: false }));
+    }
+    const ctx = await browser.newContext({ viewport: null });
+    page = await ctx.newPage();
+    if (req.body?.url) await page.goto(req.body.url, { waitUntil: "domcontentloaded" });
+    res.json({ ok: true, message: "Browser open. Log in manually, then run a scan." });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+// Identifies THIS process as an A11y Lens sidecar. Rust probes it before
+// spawning: if our own sidecar is already healthy we reuse it rather than
+// starting a second one; if something else holds the port we can say so.
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, app: "a11y-lens-sidecar", version: "2.0.0", pid: process.pid });
+});
+
+app.get("/session/status", async (_req, res) => {
+  if (!page) return res.json({ open: false });
+  res.json({ open: true, url: page.url(), title: await page.title().catch(() => "") });
+});
+
+// ---- Path recorder -------------------------------------------------------
+// Record a QA person's manual navigation (login -> checkout -> confirm) as
+// an ordered URL list, then feed it straight into the same "custom URL
+// list" replay the crawler already supports for AI Full Scan.
+app.post("/record/start", async (req, res) => {
+  try {
+    await recorder.start(page);
+    audit.log("record.start", page.url());
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e.message ?? e) });
+  }
+});
+
+app.post("/record/stop", (_req, res) => {
+  const entries = recorder.stop();
+  audit.log("record.stop", `${entries.length} pages`);
+  res.json({ ok: true, entries });
+});
+
+app.get("/record/status", (_req, res) => {
+  res.json({ ok: true, active: recorder.state.active, entries: recorder.state.entries });
+});
+
+app.post("/scan/quick", async (_req, res) => {
+  if (!page) return res.status(400).json({ ok: false, error: "No browser session. Open one first." });
+  try {
+    await page.evaluate(axeSource);
+    const results = await page.evaluate(async () => {
+      return await window.axe.run(document, {
+        runOnly: {
+          type: "tag",
+          // WCAG 2.1 Level A + AA only — the target standard.
+          // "best-practice" is deliberately excluded: those rules are good advice
+          // but are NOT WCAG conformance failures, and mixing them in overstates
+          // the violation count against WCAG 2.1.
+          values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"],
+        },
+        resultTypes: ["violations", "incomplete"],
+      });
+    });
+    const screenshot = await page.screenshot({ fullPage: false }).then(b => b.toString("base64"));
+    let violations = results.violations.map(v => ({
+      id: v.id,
+      impact: v.impact ?? "minor",
+      description: v.description,
+      help: v.help,
+      helpUrl: v.helpUrl,
+      wcag: v.tags.filter(t => /^wcag\d/.test(t)),
+      nodes: v.nodes.slice(0, 25).map(n => ({
+        target: n.target.join(" "),
+        html: n.html,
+        failureSummary: n.failureSummary,
+      })),
+    }));
+    // Visual evidence: a screenshot of each failing element, highlighted. A
+    // selector tells a developer where the problem is; a picture tells them
+    // WHICH of five near-identical banners is actually broken.
+    let shotStats = null;
+    if (req.body?.elementScreenshots !== false) {
+      try {
+        await installHighlighter(page);
+        const r = await captureElementScreenshots(page, violations, {
+          maxPerRule: Number(req.body?.maxShotsPerRule) || 5,
+          maxTotal: Number(req.body?.maxShotsTotal) || 40,
+        });
+        violations = r.violations;
+        shotStats = r.stats;
+      } catch (e) {
+        // Visual evidence is a bonus, never a reason to lose the scan.
+        logs.add({ level: "warning", source: "scan",
+                   message: `Could not capture element screenshots: ${String(e.message ?? e)}`,
+                   detail: e.stack, context: { url: page.url() } });
+      }
+    }
+
+    const score = computeScore(violations);
+    res.json({
+      ok: true,
+      url: page.url(),
+      title: await page.title(),
+      timestamp: new Date().toISOString(),
+      score,
+      counts: countBySeverity(violations),
+      violations,
+      screenshot,
+      shotStats,
+    });
+  } catch (e) {
+    logs.add({ level: "error", source: "scan", message: String(e.message ?? e),
+               detail: e.stack, context: { url: page?.url?.() } });
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+app.post("/scan/keyboard", async (_req, res) => {
+  if (!page) return res.status(400).json({ ok: false, error: "No browser session." });
+  try {
+    const findings = await page.evaluate(() => {
+      const issues = [];
+      const focusables = [...document.querySelectorAll(
+        'a[href],button,input,select,textarea,[tabindex]'
+      )];
+      for (const el of focusables) {
+        const style = getComputedStyle(el);
+        const hidden = style.display === "none" || style.visibility === "hidden";
+        const ti = el.getAttribute("tabindex");
+        if (hidden && (!ti || +ti >= 0))
+          issues.push({ type: "hidden-focusable", target: el.tagName.toLowerCase(), html: el.outerHTML.slice(0, 160) });
+        if (ti && +ti > 0)
+          issues.push({ type: "positive-tabindex", target: el.tagName.toLowerCase(), html: el.outerHTML.slice(0, 160) });
+        if (style.outlineStyle === "none" && !style.boxShadow.includes("rgb"))
+          issues.push({ type: "possible-missing-focus-indicator", target: el.tagName.toLowerCase(), html: el.outerHTML.slice(0, 160) });
+      }
+      return issues;
+    });
+    res.json({ ok: true, findings, count: findings.length });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+
+app.post("/overlay/show", async (req, res) => {
+  if (!page) return res.status(400).json({ ok: false, error: "No browser session." });
+  try {
+    const violations = req.body?.violations ?? [];
+    const placed = await page.evaluate(`(${OVERLAY_SOURCE})(${JSON.stringify(violations)})`);
+    res.json({ ok: true, placed });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+app.post("/overlay/clear", async (_req, res) => {
+  if (!page) return res.status(400).json({ ok: false, error: "No browser session." });
+  await page.evaluate("window.__a11yLens && window.__a11yLens.destroy()").catch(() => {});
+  res.json({ ok: true });
+});
+
+
+// ---- AI Expert Audit ---------------------------------------------------
+// The complement to the axe pass: finds what scanners structurally cannot see
+// (meaningful names, focus management, state exposure, visual-vs-programmatic
+// mismatch). Runs against whatever page the existing session already has open —
+// no separate navigation, no hardcoded paths.
+let expertRunning = false;
+
+app.post("/audit/expert", async (req, res) => {
+  if (!page) return res.status(400).json({ ok: false, error: "No browser session. Open one and log in first." });
+  if (expertRunning) return res.status(409).json({ ok: false, error: "An expert audit is already running." });
+
+  let ai;
+  try { ai = resolveAi(req.body?.ai); } catch (e) { return res.status(403).json({ ok: false, error: String(e.message ?? e) }); }
+
+  expertRunning = true;
+  const started = Date.now();
+  try {
+    // Feed the model this page's real scanner results so it never re-reports
+    // what axe already caught. Falls back to an empty list if no scan has run.
+    const axeViolations = Array.isArray(req.body?.axeViolations) ? req.body.axeViolations : [];
+    audit.log("audit.expert", `${ai.provider}/${ai.model} on ${page.url()}`);
+
+    const common = {
+      axeViolations,
+      keyboardWalk: req.body?.keyboardWalk !== false,
+      scope: req.body?.scope ?? "main",      // main | chrome | all
+      probes: req.body?.probes !== false,    // deterministic focus + zoom/reflow probes
+    };
+
+    let result;
+    if (req.body?.mode === "cross-check") {
+      const aiB = resolveAiB(req.body?.aiB);
+      if (!aiB) {
+        return res.status(400).json({
+          ok: false,
+          error: "Cross-check needs a second model. Configure the cross-check agent in Settings — ideally a different provider family than your primary.",
+        });
+      }
+      audit.log("audit.expert.crosscheck", `${ai.provider}/${ai.model} + ${aiB.provider}/${aiB.model}`);
+      result = await runCrossCheckAudit(page, { aiA: ai, aiB, ...common });
+    } else {
+      result = await runExpertAudit(page, { ai, ...common });
+    }
+    result.durationMs = Date.now() - started;
+    res.json({ ok: true, audit: result });
+  } catch (e) {
+    audit.log("audit.expert", `failed: ${String(e.message ?? e).slice(0, 120)}`);
+    logs.add({ level: "error", source: "expert-audit", message: String(e.message ?? e),
+               detail: [e.raw ? "MODEL OUTPUT (truncated):\n" + e.raw : null, e.stack].filter(Boolean).join("\n\n"),
+               context: { url: page?.url?.(), provider: ai?.provider, model: ai?.model } });
+    res.status(500).json({ ok: false, error: String(e.message ?? e) });
+  } finally {
+    expertRunning = false;
+  }
+});
+
+// ---- Phase 6: AI Full Scan --------------------------------------------
+app.post("/scan/full/start", (req, res) => {
+  if (!page) return res.status(400).json({ ok: false, error: "No browser session. Open one and log in first." });
+  if (crawler.state.running) return res.status(409).json({ ok: false, error: "A full scan is already running." });
+  let ai;
+  try { ai = resolveAi(req.body?.ai); } catch (e) { return res.status(403).json({ ok: false, error: String(e.message ?? e) }); }
+  const urlList = Array.isArray(req.body?.urlList) ? req.body.urlList : undefined;
+  audit.log("scan.full.start", urlList ? `custom URL list (${urlList.length})` : page.url());
+  crawler.start(page, { maxPages: req.body?.maxPages, ai, urlList });
+  res.json({ ok: true });
+});
+
+app.get("/scan/full/status", (_req, res) => {
+  const s = crawler.state;
+  res.json({
+    ok: true, running: s.running, currentUrl: s.currentUrl,
+    pages: s.pagesScanned, log: s.log.slice(-12), error: s.error, result: s.result,
+  });
+});
+
+app.post("/scan/full/stop", (_req, res) => { crawler.stop(); res.json({ ok: true }); });
+
+
+// ---- Phase 8: AI report ------------------------------------------------
+app.post("/report/ai", async (req, res) => {
+  const { scan, ai } = req.body ?? {};
+  if (!scan?.violations) return res.status(400).json({ ok: false, error: "No scan data provided." });
+
+  let resolved;
+  try {
+    resolved = resolveAi(ai);
+  } catch (e) {
+    logs.add({ level: "error", source: "ai-report", message: String(e.message ?? e) });
+    return res.status(403).json({ ok: false, error: String(e.message ?? e) });
+  }
+
+  try {
+    audit.log("report.ai.generate", `${resolved.provider}/${resolved.model}`);
+    const { report, warnings, degraded } = await generateAiReport(scan, resolved);
+
+    // A model that emits one malformed snippet must not cost the user the whole
+    // report. We got a report back, so by definition nothing here was fatal —
+    // these are warnings, not errors. (Reserving "error" for genuine failures is
+    // what keeps the "check Logs" alert meaningful instead of crying wolf.)
+    for (const w of warnings ?? []) {
+      logs.add({
+        level: "warning",
+        source: "ai-report",
+        message: w.message,
+        detail: w.detail,
+        context: { url: scan.url, provider: resolved.provider, model: resolved.model, stage: w.stage },
+      });
+    }
+
+    res.json({ ok: true, report, degraded: !!degraded, warningCount: (warnings ?? []).length });
+  } catch (e) {
+    // Total failure — nothing salvageable. Record everything we know about it.
+    logs.add({
+      level: "error",
+      source: "ai-report",
+      message: String(e.message ?? e),
+      detail: [e.raw ? "MODEL OUTPUT (truncated):\n" + e.raw : null, e.stack].filter(Boolean).join("\n\n"),
+      context: { url: scan.url, provider: resolved.provider, model: resolved.model },
+    });
+    res.status(500).json({ ok: false, error: String(e.message ?? e) });
+  }
+});
+
+// ---- Logs ---------------------------------------------------------------
+app.get("/logs", (req, res) => {
+  res.json({ ok: true, logs: logs.list(Number(req.query.limit) || 200) });
+});
+
+app.delete("/logs", (_req, res) => {
+  logs.clear();
+  audit.log("logs.clear", "");
+  res.json({ ok: true });
+});
+
+// Lets the UI record client-side failures in the same place, so "check Logs"
+// means one place rather than two.
+app.post("/logs", (req, res) => {
+  const { level, source, message, detail, context } = req.body ?? {};
+  const id = logs.add({ level, source: source || "ui", message, detail, context });
+  res.json({ ok: !!id, id });
+});
+
+
+// ---- Phase 10: sessions (SQLite) --------------------------------------
+app.get("/sessions", (_req, res) => res.json({ ok: true, sessions: sessions.list() }));
+
+app.get("/sessions/:id", (req, res) => {
+  const scan = sessions.get(+req.params.id);
+  scan ? res.json({ ok: true, scan }) : res.status(404).json({ ok: false, error: "Session not found." });
+});
+
+app.post("/sessions", (req, res) => {
+  let scan = req.body?.scan;
+  if (!scan?.url || !scan?.timestamp) return res.status(400).json({ ok: false, error: "Invalid scan payload." });
+  const cfg = securityConfig();
+  if (cfg.masking) scan = maskScan(scan, { storeScreenshots: cfg.storeScreenshots });
+  audit.log("session.save", scan.url);
+  res.json({ ok: true, id: sessions.save(scan) });
+});
+
+app.delete("/sessions/:id", (req, res) => {
+  audit.log("session.delete", req.params.id);
+  res.json({ ok: sessions.remove(+req.params.id) });
+});
+
+
+// ---- Export -------------------------------------------------------------
+// Tauri's webview (WebView2 / WKWebView) does NOT honour <a download> on blob
+// URLs, so the browser-style download trick silently does nothing in the
+// packaged app. The reliable path is: the UI posts the content here, the
+// sidecar writes it to disk with Node, and we hand back the absolute path.
+const EXPORT_DIR = process.env.A11Y_EXPORT_DIR || join(homedir(), "A11yLens", "reports");
+
+app.post("/export", (req, res) => {
+  const { filename, content } = req.body ?? {};
+  if (!filename || typeof content !== "string") {
+    return res.status(400).json({ ok: false, error: "filename and content are required." });
+  }
+  // Never let a filename escape the export directory.
+  const safe = String(filename).replace(/[/\\]/g, "_").replace(/\.\./g, "_");
+  try {
+    mkdirSync(EXPORT_DIR, { recursive: true });
+    const path = join(EXPORT_DIR, safe);
+    writeFileSync(path, content, "utf8");
+    audit.log("export", safe);
+    res.json({ ok: true, path, dir: EXPORT_DIR });
+  } catch (e) {
+    logs.add({ level: "error", source: "export", message: String(e.message ?? e), detail: e.stack });
+    res.status(500).json({ ok: false, error: String(e.message ?? e) });
+  }
+});
+
+// ---- Update an existing session -----------------------------------------
+// An AI report or expert audit is attached AFTER the scan is first saved, so
+// without this the SQLite row keeps the original scan and every export comes
+// out missing the AI sections.
+app.put("/sessions/:id", (req, res) => {
+  let scan = req.body?.scan;
+  if (!scan?.url) return res.status(400).json({ ok: false, error: "Invalid scan payload." });
+  const cfg = securityConfig();
+  if (cfg.masking) scan = maskScan(scan, { storeScreenshots: cfg.storeScreenshots });
+  const ok = sessions.update(+req.params.id, scan);
+  if (!ok) return res.status(404).json({ ok: false, error: "Session not found." });
+  audit.log("session.update", `${req.params.id} ${scan.url}`);
+  res.json({ ok: true, id: +req.params.id });
+});
+
+// ---- Phase 11: import (export is a client-side file download) ---------
+app.post("/sessions/import", (req, res) => {
+  const scan = req.body?.scan;
+  if (!scan?.url || !scan?.violations) return res.status(400).json({ ok: false, error: "Not a valid A11y Lens session file." });
+  audit.log("session.import", scan.url);
+  const cfgImp = securityConfig();
+  res.json({ ok: true, id: sessions.save(cfgImp.masking ? maskScan(scan, { storeScreenshots: cfgImp.storeScreenshots }) : scan) });
+});
+
+// ---- Phase 13: comparison ----------------------------------------------
+app.post("/compare", (req, res) => {
+  const { prevId, currId } = req.body ?? {};
+  const a = sessions.get(+prevId), b = sessions.get(+currId);
+  if (!a || !b) return res.status(404).json({ ok: false, error: "One or both sessions not found." });
+  res.json({ ok: true, comparison: compareScans(a, b) });
+});
+
+
+// ---- Phase 15: security ------------------------------------------------
+function securityConfig() {
+  return { localOnly: false, masking: true, storeScreenshots: false, ...(settings.get("security") ?? {}) };
+}
+
+// Resolve the AI config for a request: stored encrypted key wins over a
+// request-supplied one; local-only mode is enforced for every AI call.
+function resolveAi(reqAi) {
+  const stored = settings.get("ai");
+  const provider = reqAi?.provider || stored?.provider;
+  const defaults = AI_PROVIDER_DEFAULTS[provider] ?? {};
+  const ai = {
+    provider,
+    model: reqAi?.model || stored?.model || defaults.model,
+    baseUrl: reqAi?.baseUrl || stored?.baseUrl || defaults.baseUrl,
+    apiKey: stored?.apiKeyEnc ? decrypt(stored.apiKeyEnc) : reqAi?.apiKey,
+  };
+  assertProviderAllowed(ai.provider, securityConfig().localOnly);
+  return ai;
+}
+
+// The cross-check agent. Deliberately a SEPARATE stored config: agreement
+// between two models of the same family proves much less than agreement across
+// families, so the second model should usually be a different provider.
+function resolveAiB(reqAi) {
+  const stored = settings.get("aiB");
+  const provider = reqAi?.provider || stored?.provider;
+  if (!provider) return null;
+  const defaults = AI_PROVIDER_DEFAULTS[provider] ?? {};
+  const ai = {
+    provider,
+    model: reqAi?.model || stored?.model || defaults.model,
+    baseUrl: reqAi?.baseUrl || stored?.baseUrl || defaults.baseUrl,
+    apiKey: stored?.apiKeyEnc ? decrypt(stored.apiKeyEnc) : reqAi?.apiKey,
+  };
+  assertProviderAllowed(ai.provider, securityConfig().localOnly);
+  return ai;
+}
+
+app.get("/settings/ai/crosscheck", (_req, res) => {
+  const s = settings.get("aiB") ?? {};
+  res.json({ ok: true, provider: s.provider ?? "", model: s.model ?? "", baseUrl: s.baseUrl ?? "", hasKey: !!s.apiKeyEnc });
+});
+
+app.post("/settings/ai/crosscheck", (req, res) => {
+  const { provider, model, apiKey, baseUrl } = req.body ?? {};
+  const prev = settings.get("aiB") ?? {};
+  settings.set("aiB", {
+    provider, model, baseUrl,
+    apiKeyEnc: apiKey ? encrypt(apiKey) : prev.apiKeyEnc,
+  });
+  audit.log("settings.aiB.update", `${provider}/${model}`);
+  res.json({ ok: true });
+});
+
+app.get("/settings/ai", (_req, res) => {
+  const s = settings.get("ai") ?? {};
+  res.json({ ok: true, provider: s.provider ?? "", model: s.model ?? "", baseUrl: s.baseUrl ?? "", hasKey: !!s.apiKeyEnc });
+});
+
+app.get("/settings/ai/providers", (_req, res) => {
+  res.json({ ok: true, defaults: AI_PROVIDER_DEFAULTS });
+});
+
+// Test the AI provider config with a minimal real completion call.
+// Uses request-supplied values (what's currently typed in the form) merged
+// with the stored encrypted key, so users can test before or after saving.
+app.post("/settings/ai/test", async (req, res) => {
+  const started = Date.now();
+  try {
+    const ai = resolveAi(req.body ?? {});
+    const reply = await aiChat(ai, 'Reply with exactly the word "OK" and nothing else.', 10);
+    audit.log("settings.ai.test", `${ai.provider}/${ai.model} ok`);
+    res.json({
+      ok: true,
+      provider: ai.provider,
+      model: ai.model,
+      baseUrl: ai.baseUrl ?? null,
+      latencyMs: Date.now() - started,
+      reply: String(reply).slice(0, 80),
+    });
+  } catch (e) {
+    audit.log("settings.ai.test", `failed: ${String(e.message ?? e).slice(0, 120)}`);
+    res.status(502).json({ ok: false, error: String(e.message ?? e), latencyMs: Date.now() - started });
+  }
+});
+
+app.post("/settings/ai", (req, res) => {
+  const { provider, model, apiKey, baseUrl } = req.body ?? {};
+  const prev = settings.get("ai") ?? {};
+  settings.set("ai", {
+    provider, model, baseUrl,
+    apiKeyEnc: apiKey ? encrypt(apiKey) : prev.apiKeyEnc, // keep existing key if blank
+  });
+  audit.log("settings.ai.update", `${provider}/${model}`);
+  res.json({ ok: true });
+});
+
+app.get("/settings/security", (_req, res) => res.json({ ok: true, ...securityConfig() }));
+
+app.post("/settings/security", (req, res) => {
+  const cfg = { ...securityConfig(), ...req.body };
+  settings.set("security", cfg);
+  audit.log("settings.security.update", JSON.stringify(cfg));
+  res.json({ ok: true, ...cfg });
+});
+
+app.get("/audit", (_req, res) => res.json({ ok: true, entries: audit.list() }));
+
+
+// ---- Inspect Toolbar (Silktide-style manual tools) ---------------------
+app.post("/toolbar/show", async (_req, res) => {
+  if (!page) return res.status(400).json({ ok: false, error: "No browser session." });
+  try {
+    await page.evaluate(`(${TOOLBAR_SOURCE})()`);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e) });
+  }
+});
+
+app.post("/toolbar/hide", async (_req, res) => {
+  if (!page) return res.status(400).json({ ok: false, error: "No browser session." });
+  await page.evaluate("window.__a11yToolbar && window.__a11yToolbar.destroy()").catch(() => {});
+  res.json({ ok: true });
+});
+
+function countBySeverity(vs) {
+  const c = { critical: 0, serious: 0, moderate: 0, minor: 0 };
+  for (const v of vs) c[v.impact] = (c[v.impact] ?? 0) + v.nodes.length;
+  return c;
+}
+function computeScore(vs) {
+  const w = { critical: 10, serious: 5, moderate: 2, minor: 1 };
+  const penalty = vs.reduce((s, v) => s + (w[v.impact] ?? 1) * Math.min(v.nodes.length, 10), 0);
+  return Math.max(0, Math.round(100 - penalty));
+}
+
+const PORT = process.env.A11Y_SIDECAR_PORT || 8787;
+
+const server = app.listen(PORT, () => {
+  console.log(`[a11y-sidecar] listening on http://localhost:${PORT} (pid ${process.pid})`);
+});
+
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    // Distinct exit code so the Rust side can react to this specifically rather
+    // than treating every startup failure the same way.
+    console.error(
+      `[a11y-sidecar] port ${PORT} is already in use. Another A11y Lens sidecar ` +
+      `(or another program) is holding it.`
+    );
+    process.exit(3);
+  }
+  console.error(`[a11y-sidecar] failed to start: ${err.message}`);
+  process.exit(1);
+});
+
+// Shut down cleanly when Tauri kills us, so the port is released immediately.
+for (const sig of ["SIGTERM", "SIGINT"]) {
+  process.on(sig, () => {
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 2000).unref();
+  });
+}

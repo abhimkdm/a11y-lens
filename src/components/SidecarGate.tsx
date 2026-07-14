@@ -11,11 +11,22 @@ import { waitForSidecar } from "../services/api";
 // look identical. This gate tells them apart.
 export default function SidecarGate({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<"booting" | "ready" | "failed">("booting");
+  const [detail, setDetail] = useState("");
 
   const boot = useCallback(async () => {
     setState("booting");
-    const ok = await waitForSidecar(20000);
-    setState(ok ? "ready" : "failed");
+    const ok = await waitForSidecar(30000);
+    if (ok) { setState("ready"); return; }
+    // Ask Rust what the sidecar actually said on its way down. "Couldn't reach it"
+    // is not a diagnosis; the child's stderr usually is.
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const err = await invoke<string>("sidecar_last_error");
+      setDetail((err || "").trim());
+    } catch {
+      setDetail("");
+    }
+    setState("failed");
   }, []);
 
   useEffect(() => { boot(); }, [boot]);
@@ -52,11 +63,23 @@ export default function SidecarGate({ children }: { children: React.ReactNode })
             A11y Lens couldn't reach its scanning service on localhost:8787.
           </Alert>
           <Typography variant="body2" color="text.secondary">
-            Most common causes: another copy of A11y Lens is already running and holding the port,
-            or the browser engine hasn't been installed yet
-            (<code>npx playwright install chromium</code>). If you're running from source, start it
-            with <code>npm run sidecar</code> in a separate terminal.
+            A11y Lens tried three times, clearing any orphaned service between attempts. Common causes:
+            the browser engine isn't installed yet (<code>npx playwright install chromium</code>), or
+            another program is holding port 8787. If you're running from source, start it with{" "}
+            <code>npm run sidecar</code> in a separate terminal.
           </Typography>
+
+          {detail && (
+            <Box sx={{ width: "100%" }}>
+              <Typography variant="overline">What the service reported</Typography>
+              <Box component="pre" sx={{
+                m: 0, mt: 0.5, p: 1.5, borderRadius: 1.5, bgcolor: "#0E1116",
+                border: "1px solid rgba(154,167,180,0.2)", fontSize: 12,
+                fontFamily: "IBM Plex Mono, monospace", whiteSpace: "pre-wrap",
+                maxHeight: 180, overflow: "auto", color: "#FFB0B0",
+              }}>{detail}</Box>
+            </Box>
+          )}
           <Button variant="contained" startIcon={<RefreshIcon />} onClick={retry}>
             Retry
           </Button>

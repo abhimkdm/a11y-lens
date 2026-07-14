@@ -34,6 +34,18 @@ function openDatabase() {
 
 const require_ = createRequire(import.meta.url);
 const { db, driver } = openDatabase();
+
+// WAL + a busy timeout. Without these, a second sidecar instance dies at import
+// time with a bare "database is locked" — which masks the ACTUAL problem (the
+// port is already taken) behind a misleading error. Now it gets past the DB and
+// fails on the port, where the message is honest.
+try {
+  db.exec("PRAGMA journal_mode = WAL;");
+  db.exec("PRAGMA busy_timeout = 5000;");
+} catch {
+  // Older drivers may not support these; not fatal.
+}
+
 console.log(`[a11y-sidecar] storage: ${driver} (${dbPath})`);
 
 db.exec(`

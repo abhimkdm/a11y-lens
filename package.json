@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build",
+    "tauri:build": "npm run sidecar:build && tauri build",
     "sidecar": "node --no-warnings=ExperimentalWarning sidecar/server.mjs",
     "launch": "pwsh scripts/launch-dev.ps1",
     "sidecar:build": "node scripts/build-sidecar.mjs",

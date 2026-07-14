@@ -10,6 +10,12 @@ import ContactCard from "../components/ContactCard";
 
 const PROVIDERS = ["ollama", "openai", "claude", "gemini", "kimi"];
 
+// The cross-check model is only used by the AI Expert Audit, which is currently
+// hidden behind SHOW_EXPERT_AUDIT in ScanCenter. Showing a config panel for a
+// feature the user can't reach is just clutter — so it's hidden with it.
+// Flip both flags together to bring the feature back.
+const SHOW_CROSS_CHECK = false;
+
 export default function Settings() {
   const { aiProvider, setAiProvider } = useAppStore();
   const [hasKey, setHasKey] = useState(false);
@@ -139,55 +145,57 @@ export default function Settings() {
         </Stack>
       </Paper>
 
-      <Paper sx={{ p: 3 }}>
-        <Stack direction="row" alignItems="center" spacing={1}>
-          <Typography variant="overline">Cross-check model (second opinion)</Typography>
-          {aiBHasKey && <Chip size="small" icon={<LockIcon />} label="Key stored encrypted" color="success" variant="outlined" />}
-        </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 1.5 }}>
-          Used by the Expert Audit's cross-check mode: two models judge the same evidence, and findings are
-          tiered into consensus / confirmed / needs-review. Pick a <strong>different provider family</strong> than
-          your primary — two models from the same family tend to make the same mistakes, so their agreement
-          proves much less.
-        </Typography>
-        <Stack spacing={2}>
-          <TextField select size="small" label="Provider" value={aiB.provider}
-            onChange={(e) => {
-              const p = e.target.value;
-              const d = providerDefaults[p];
-              setAiB((prev) => ({ ...prev, provider: p, model: prev.model || d?.model || "", baseUrl: prev.baseUrl || d?.baseUrl || "" }));
-            }}>
-            <MenuItem value="">(disabled — no cross-check)</MenuItem>
-            {PROVIDERS.map((p) => <MenuItem key={p} value={p}>{p}</MenuItem>)}
-          </TextField>
-          {sameFamily && (
-            <Alert severity="warning">
-              Your cross-check model is the same provider as your primary. Agreement between two models of the
-              same family is weak evidence — prefer a different family (e.g. primary Kimi, cross-check Claude).
-            </Alert>
-          )}
-          {aiB.provider && (
-            <>
-              <TextField size="small" label="Model" value={aiB.model}
-                placeholder={providerDefaults[aiB.provider]?.model}
-                onChange={(e) => setAiB((p) => ({ ...p, model: e.target.value }))} />
-              {aiBIsOpenAiCompatible && (
-                <TextField size="small" label="Base URL" value={aiB.baseUrl}
-                  placeholder={providerDefaults[aiB.provider]?.baseUrl || "https://api.openai.com/v1"}
-                  onChange={(e) => setAiB((p) => ({ ...p, baseUrl: e.target.value }))} />
-              )}
-              <TextField size="small" type="password"
-                label={aiBHasKey ? "API key (leave blank to keep current)" : "API key"}
-                value={aiB.apiKey}
-                onChange={(e) => setAiB((p) => ({ ...p, apiKey: e.target.value }))} />
-            </>
-          )}
-          <Button variant="outlined" onClick={saveAiB} sx={{ alignSelf: "flex-start" }}>
-            Save cross-check model
-          </Button>
-          {aiBMsg && <Alert severity={aiBMsg.kind}>{aiBMsg.text}</Alert>}
-        </Stack>
-      </Paper>
+      {SHOW_CROSS_CHECK && (<>
+        <Paper sx={{ p: 3 }}>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <Typography variant="overline">Cross-check model (second opinion)</Typography>
+            {aiBHasKey && <Chip size="small" icon={<LockIcon />} label="Key stored encrypted" color="success" variant="outlined" />}
+          </Stack>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 1.5 }}>
+            Used by the Expert Audit's cross-check mode: two models judge the same evidence, and findings are
+            tiered into consensus / confirmed / needs-review. Pick a <strong>different provider family</strong> than
+            your primary — two models from the same family tend to make the same mistakes, so their agreement
+            proves much less.
+          </Typography>
+          <Stack spacing={2}>
+            <TextField select size="small" label="Provider" value={aiB.provider}
+              onChange={(e) => {
+                const p = e.target.value;
+                const d = providerDefaults[p];
+                setAiB((prev) => ({ ...prev, provider: p, model: prev.model || d?.model || "", baseUrl: prev.baseUrl || d?.baseUrl || "" }));
+              }}>
+              <MenuItem value="">(disabled — no cross-check)</MenuItem>
+              {PROVIDERS.map((p) => <MenuItem key={p} value={p}>{p}</MenuItem>)}
+            </TextField>
+            {sameFamily && (
+              <Alert severity="warning">
+                Your cross-check model is the same provider as your primary. Agreement between two models of the
+                same family is weak evidence — prefer a different family (e.g. primary Kimi, cross-check Claude).
+              </Alert>
+            )}
+            {aiB.provider && (
+              <>
+                <TextField size="small" label="Model" value={aiB.model}
+                  placeholder={providerDefaults[aiB.provider]?.model}
+                  onChange={(e) => setAiB((p) => ({ ...p, model: e.target.value }))} />
+                {aiBIsOpenAiCompatible && (
+                  <TextField size="small" label="Base URL" value={aiB.baseUrl}
+                    placeholder={providerDefaults[aiB.provider]?.baseUrl || "https://api.openai.com/v1"}
+                    onChange={(e) => setAiB((p) => ({ ...p, baseUrl: e.target.value }))} />
+                )}
+                <TextField size="small" type="password"
+                  label={aiBHasKey ? "API key (leave blank to keep current)" : "API key"}
+                  value={aiB.apiKey}
+                  onChange={(e) => setAiB((p) => ({ ...p, apiKey: e.target.value }))} />
+              </>
+            )}
+            <Button variant="outlined" onClick={saveAiB} sx={{ alignSelf: "flex-start" }}>
+              Save cross-check model
+            </Button>
+            {aiBMsg && <Alert severity={aiBMsg.kind}>{aiBMsg.text}</Alert>}
+          </Stack>
+        </Paper>
+      </>)}
 
       <Paper sx={{ p: 3 }}>
         <Typography variant="overline">Security</Typography>

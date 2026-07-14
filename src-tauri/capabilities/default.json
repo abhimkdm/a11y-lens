@@ -1,20 +1,21 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Allows the app to spawn its bundled sidecar and to hand mailto:/webexteams: links to the OS. Tauri v2 denies shell access by default — without these permissions both fail at runtime even though the code is correct.",
+  "description": "Allows the app to spawn its bundled Node runtime (which runs the sidecar) and to hand mailto:/webexteams: links to the OS. Tauri v2 denies shell access by default — without these, both fail at runtime even though the code is correct.",
   "windows": ["main"],
   "permissions": [
     "core:default",
     "shell:allow-execute",
     {
       "identifier": "shell:allow-spawn",
-      "allow": [{ "name": "a11y-sidecar", "sidecar": true }]
+      "allow": [{ "name": "a11y-node", "sidecar": true }]
     },
     {
       "identifier": "shell:allow-open",
       "allow": [
         { "url": "mailto:*" },
-        { "url": "webexteams://im?space=25f42ac0-7e9d-11f1-a1ea-df11035388c8" }
+        { "url": "webexteams:*" },
+        { "url": "https://*" }
       ]
     }
   ]

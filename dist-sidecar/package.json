@@ -1,0 +1,11 @@
+{
+  "name": "a11y-lens-sidecar",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "express": "^4.21.2",
+    "cors": "^2.8.5",
+    "axe-core": "^4.10.2",
+    "playwright": "^1.49.0"
+  }
+}

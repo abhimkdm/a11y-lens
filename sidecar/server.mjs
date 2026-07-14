@@ -29,6 +29,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { runExpertAudit } from "./expert-audit.mjs";
 import { runCrossCheckAudit } from "./cross-check.mjs";
+import { captureElementScreenshots, installHighlighter } from "./element-shots.mjs";
 import { sessions, settings, audit, logs } from "./db.mjs";
 import { encrypt, decrypt, maskScan, assertProviderAllowed } from "./security.mjs";
 import { compareScans } from "./compare.mjs";
@@ -59,6 +60,13 @@ app.post("/session/open", async (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e) });
   }
+});
+
+// Identifies THIS process as an A11y Lens sidecar. Rust probes it before
+// spawning: if our own sidecar is already healthy we reuse it rather than
+// starting a second one; if something else holds the port we can say so.
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, app: "a11y-lens-sidecar", version: "2.0.0", pid: process.pid });
 });
 
 app.get("/session/status", async (_req, res) => {
@@ -108,7 +116,7 @@ app.post("/scan/quick", async (_req, res) => {
       });
     });
     const screenshot = await page.screenshot({ fullPage: false }).then(b => b.toString("base64"));
-    const violations = results.violations.map(v => ({
+    let violations = results.violations.map(v => ({
       id: v.id,
       impact: v.impact ?? "minor",
       description: v.description,
@@ -121,6 +129,27 @@ app.post("/scan/quick", async (_req, res) => {
         failureSummary: n.failureSummary,
       })),
     }));
+    // Visual evidence: a screenshot of each failing element, highlighted. A
+    // selector tells a developer where the problem is; a picture tells them
+    // WHICH of five near-identical banners is actually broken.
+    let shotStats = null;
+    if (req.body?.elementScreenshots !== false) {
+      try {
+        await installHighlighter(page);
+        const r = await captureElementScreenshots(page, violations, {
+          maxPerRule: Number(req.body?.maxShotsPerRule) || 5,
+          maxTotal: Number(req.body?.maxShotsTotal) || 40,
+        });
+        violations = r.violations;
+        shotStats = r.stats;
+      } catch (e) {
+        // Visual evidence is a bonus, never a reason to lose the scan.
+        logs.add({ level: "warning", source: "scan",
+                   message: `Could not capture element screenshots: ${String(e.message ?? e)}`,
+                   detail: e.stack, context: { url: page.url() } });
+      }
+    }
+
     const score = computeScore(violations);
     res.json({
       ok: true,
@@ -131,6 +160,7 @@ app.post("/scan/quick", async (_req, res) => {
       counts: countBySeverity(violations),
       violations,
       screenshot,
+      shotStats,
     });
   } catch (e) {
     logs.add({ level: "error", source: "scan", message: String(e.message ?? e),
@@ -550,4 +580,29 @@ function computeScore(vs) {
 }
 
 const PORT = process.env.A11Y_SIDECAR_PORT || 8787;
-app.listen(PORT, () => console.log(`[a11y-sidecar] listening on http://localhost:${PORT}`));
+
+const server = app.listen(PORT, () => {
+  console.log(`[a11y-sidecar] listening on http://localhost:${PORT} (pid ${process.pid})`);
+});
+
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    // Distinct exit code so the Rust side can react to this specifically rather
+    // than treating every startup failure the same way.
+    console.error(
+      `[a11y-sidecar] port ${PORT} is already in use. Another A11y Lens sidecar ` +
+      `(or another program) is holding it.`
+    );
+    process.exit(3);
+  }
+  console.error(`[a11y-sidecar] failed to start: ${err.message}`);
+  process.exit(1);
+});
+
+// Shut down cleanly when Tauri kills us, so the port is released immediately.
+for (const sig of ["SIGTERM", "SIGINT"]) {
+  process.on(sig, () => {
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 2000).unref();
+  });
+}

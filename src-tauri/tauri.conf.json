@@ -28,7 +28,7 @@
     "active": true,
     "targets": "all",
     "externalBin": [
-      "sidecar/a11y-sidecar"
+      "sidecar/a11y-node"
     ],
     "windows": {
       "webviewInstallMode": {
@@ -41,6 +41,9 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "resources": {
+      "../dist-sidecar/": "./"
+    }
   }
 }
