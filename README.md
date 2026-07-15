@@ -23,20 +23,30 @@ AI accessibility testing desktop platform: Tauri v2 · React 19 · MUI · Zustan
 - **Phase 12 (starter)** — Ignore-rule action in the violation list
 
 ## PowerShell scripts (Windows & macOS)
+
+**Prerequisites:** Node **22.5+** (ships as `a11y-node` in installers; `node:sqlite` needs 22.5), Rust, Playwright Chromium once (`npx playwright install chromium`). Windows also needs MSVC Build Tools; macOS needs Xcode Command Line Tools (`xcode-select --install`).
+
 ```powershell
-# Windows — Windows PowerShell 5.1 (built into Windows) or PowerShell 7, either works
-powershell -File scripts\launch-dev.ps1              # dev: sidecar + desktop app together (-UiOnly for browser mode)
+# Windows — PowerShell 5.1+ or PowerShell 7
+powershell -File scripts\launch-dev.ps1              # dev: sidecar + Tauri window (-UiOnly for Vite only)
 powershell -File scripts\build-windows.ps1           # MSI + NSIS installers
+powershell -ExecutionPolicy Bypass -File scripts\prereq-windows.ps1 -InstallBrowser   # end-user checks
 
 # macOS — install PowerShell once: brew install --cask powershell
-pwsh scripts/launch-dev.ps1
-pwsh scripts/build-macos.ps1                          # .app + .dmg (-Universal for arm64+x64)
+pwsh scripts/launch-macos-dev.ps1                    # dev: sidecar + Tauri window (-UiOnly for Vite only)
+pwsh scripts/build-macos.ps1                         # .app + .dmg (-Universal for arm64+x64 Rust binary)
 ```
-Build scripts compile the sidecar into a standalone binary (@yao-pkg/pkg) matching Tauri's
-externalBin convention, then run `tauri build`. Installers land in `src-tauri/target/release/bundle/`.
-Prereqs: Node 18+, Rust (MSVC Build Tools on Windows / Xcode CLT on macOS).
-Production note: wire `main.rs::start_sidecar` to spawn the bundled sidecar on app start
-(dev mode uses `npm run sidecar`). End users need Playwright's Chromium once: `npx playwright install chromium`.
+
+**Build installers** (any platform — run on the OS you are targeting):
+
+```bash
+npm install
+npm run tauri:build    # stages dist-sidecar/ + a11y-node, then bundles — NOT plain `npx tauri build`
+```
+
+Packaging ships a **real Node runtime** (`a11y-node-<target-triple>`) plus `dist-sidecar/` as Tauri resources. Playwright cannot be packed into a single-file binary, so the app runs `a11y-node sidecar/server.mjs` at launch. Output lands in `src-tauri/target/release/bundle/` — **MSI + NSIS** on Windows, **`.app` + `.dmg`** on macOS.
+
+**End users (installed app):** Tauri spawns and supervises the sidecar — health check, orphan cleanup, retries, clean kill on exit. Chromium is a one-time download (~150 MB); the app can guide this on first use.
 
 ## Run it
 
@@ -44,11 +54,10 @@ Production note: wire `main.rs::start_sidecar` to spawn the bundled sidecar on a
 npm install
 npx playwright install chromium     # once — browser binaries can't be bundled
 
-npm run tauri:dev                   # ONE command: sidecar + UI + desktop window
+npm run tauri:dev                   # sidecar + Vite + desktop window (one command)
 ```
 
-That's it. `tauri:dev` starts the automation sidecar and the Vite dev server together
-(via `concurrently`), then opens the desktop window.
+`tauri dev` runs `npm run dev` first (via `beforeDevCommand`), which starts the automation sidecar and Vite together through `concurrently`, then opens the desktop window.
 
 Other entry points:
 
@@ -58,6 +67,8 @@ Other entry points:
 | `npm run dev` | Sidecar + UI in the browser — no Rust toolchain needed |
 | `npm run dev:ui` | Vite only, for pure UI work |
 | `npm run sidecar` | The automation engine on its own |
+| `pwsh scripts/launch-macos-dev.ps1` | macOS dev launcher (explicit sidecar lifecycle) |
+| `powershell -File scripts\launch-dev.ps1` | Windows dev launcher (explicit sidecar lifecycle) |
 
 **In the installed app you never start anything.** Tauri spawns and supervises the sidecar
 itself — health check, orphan cleanup, three retries, and a clean kill on exit.
@@ -67,12 +78,13 @@ listening, a second one detects it, says so, and exits cleanly rather than killi
 run. If something *else* is holding the port, it says that instead.
 
 ### Troubleshooting: "TypeError: Failed to fetch"
-This means the UI can't reach the sidecar at `localhost:8787` — always start it separately first:
+The UI can't reach the sidecar at `localhost:8787`. Usually the sidecar isn't running or crashed on startup.
+
 ```bash
-npm run sidecar
+npm run sidecar    # run in a separate terminal and watch for errors
 ```
-Keep that terminal open while using the app (`launch-dev.ps1` does this for you automatically).
-If it still fails, check the sidecar terminal for errors (e.g. missing Chromium — run `npx playwright install chromium`).
+
+Common fixes: `npx playwright install chromium` (missing browser), port 8787 held by a stale process (close other A11y Lens windows), or on Windows rebuild after the `main.rs` path fix if you see `EISDIR: lstat 'C:'`.
 
 ## Next phases (feed to Claude Code one at a time)
 Excel/PDF export · full ignore management (reason/owner/expiry).
