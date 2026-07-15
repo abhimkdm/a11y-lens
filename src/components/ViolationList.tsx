@@ -7,6 +7,7 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
 import SeverityChip from "./SeverityChip";
 import { useAppStore, type Violation } from "../store/useAppStore";
+import ElementEvidence from "./ElementEvidence";
 
 export default function ViolationList({ violations }: { violations: Violation[] }) {
   const { ignored, ignoreRule } = useAppStore();
@@ -38,6 +39,7 @@ export default function ViolationList({ violations }: { violations: Violation[] 
                   {n.html}
                 </Box>
                 <Typography variant="caption" color="text.secondary">{n.failureSummary}</Typography>
+                <ElementEvidence node={n} />
               </Box>
             ))}
             <Stack direction="row" spacing={1}>

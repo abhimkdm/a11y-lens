@@ -97,8 +97,13 @@ if(D.aiReport){
   '<div class="muted">Business impact</div><p>'+esc(D.aiReport.businessImpact)+'</p>'+
   (D.aiReport.quickWins?.length?'<div class="muted">Quick wins</div><p>'+D.aiReport.quickWins.map(esc).join("<br>")+'</p>':"")+
   '<div class="muted">Developer fixes</div>'+
-  D.aiReport.fixes.map(f=>'<p><strong>'+esc(f.title)+'</strong> <span class="muted">('+f.rule+")</span><br>"+esc(f.explanation)+
-  '</p><pre>HTML:  '+esc(f.html)+'\\n\\nReact: '+esc(f.react)+'\\n\\nAngular: '+esc(f.angular)+'</pre>').join("")+
+  D.aiReport.fixes.map(f=>'<div style="margin-bottom:16px"><strong>'+esc(f.title)+'</strong> <span class="muted">('+f.rule+")</span>"+
+  (f.evidenceStatus ? ' <span class="pill" style="color:'+(f.evidenceStatus==="verified"?"#7BE8B0":"#FFB35C")+';border-color:'+(f.evidenceStatus==="verified"?"#7BE8B0":"#FFB35C")+'55">'+f.evidenceStatus+'</span>' : '')+
+  (f.scenario ? ' <span class="muted">'+esc(f.scenario)+'</span>' : '')+
+  '<p>'+esc(f.explanation)+'</p>'+
+  (f.evidence ? '<div class="muted">Evidence'+(f.selector?' \u00b7 '+esc(f.selector):'')+'</div><pre>'+esc(f.evidence)+'</pre>' : '')+
+  (f.screenshot ? '<details style="margin:6px 0"><summary style="cursor:pointer;font-size:12.5px;color:var(--minor)">Show visual evidence</summary><img src="data:image/jpeg;base64,'+f.screenshot+'" alt="Screenshot of the failing element" style="max-width:100%;border-radius:6px;border:1px solid #9aa7b433;margin-top:6px"></details>' : '')+
+  '<pre>HTML:  '+esc(f.html)+'\\n\\nReact: '+esc(f.react)+'\\n\\nAngular: '+esc(f.angular)+'</pre></div>').join("")+
   '</div></details>';
 }
 const active=new Set();let q="";
@@ -109,7 +114,15 @@ function render(){
     const d=document.createElement("details");
     d.innerHTML='<summary><span class="pill" style="color:'+col[v.impact]+';border-color:'+col[v.impact]+'55;background:'+col[v.impact]+'18">'+v.impact+'</span><strong>'+esc(v.help)+'</strong><span class="muted" style="margin-left:auto">'+v.nodes.length+' · '+(v.wcag.join(", ")||"best practice")+'</span></summary>'+
     '<div class="body"><p>'+esc(v.description)+'</p>'+
-    v.nodes.map(n=>'<div><div class="muted" style="font-size:12px">'+esc(n.target)+'</div><pre>'+esc(n.html)+'</pre><div class="muted" style="font-size:12px;margin-bottom:10px">'+esc(n.failureSummary||"")+'</div></div>').join("")+
+    v.nodes.map(n=>'<div><div class="muted" style="font-size:12px">'+esc(n.target)+'</div><pre>'+esc(n.html)+'</pre>'+
+    '<div class="muted" style="font-size:12px;margin-bottom:6px">'+esc(n.failureSummary||"")+'</div>'+
+    (n.screenshot
+      ? '<details style="margin:0 0 12px"><summary style="padding:6px 0;font-size:12px;color:var(--minor)">Show visual evidence</summary>'+
+        '<img src="data:image/jpeg;base64,'+n.screenshot+'" alt="Screenshot of the failing element, outlined on the page" '+
+        'style="max-width:100%;border-radius:6px;border:1px solid #9aa7b433;margin-top:6px">'+
+        '<div class="muted" style="font-size:11px;margin-top:4px">The failing element is outlined in its severity colour.</div></details>'
+      : '')+
+    '</div>').join("")+
     '<a href="'+v.helpUrl+'" target="_blank" rel="noreferrer">Rule documentation</a></div>';
     list.appendChild(d);
   });

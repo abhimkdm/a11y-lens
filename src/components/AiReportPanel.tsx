@@ -2,6 +2,11 @@ import { useState } from "react";
 import {
   Paper, Typography, Stack, Tabs, Tab, Box, Chip, Divider,
 } from "@mui/material";
+import VerifiedIcon from "@mui/icons-material/Verified";
+import HelpOutlineIcon from "@mui/icons-material/HelpOutline";
+import Tooltip from "@mui/material/Tooltip";
+import Alert from "@mui/material/Alert";
+import ElementEvidence from "./ElementEvidence";
 import SeverityChip from "./SeverityChip";
 import type { AiReport } from "../store/useAppStore";
 
@@ -24,10 +29,30 @@ export default function AiReportPanel({ report }: { report: AiReport }) {
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
         <Typography variant="h6">AI Report</Typography>
         <Chip size="small" variant="outlined" label={report.provider} />
+        {report.evidence && (
+          <Tooltip title={`The model was shown ${report.evidence.imagesUsed} screenshot(s) and the real DOM of every failing element, across ${report.evidence.scenarios} scenario(s).`}>
+            <Chip size="small" variant="outlined"
+                  label={`${report.evidence.imagesUsed} screenshots · ${report.evidence.scenarios} scenarios`} />
+          </Tooltip>
+        )}
+        {!!report.evidence?.focusableTraced && (
+          <Tooltip title={`Keyboard focus order was walked across ${report.evidence.focusableTraced} focusable elements. A scanner cannot do this — it cannot press Tab.`}>
+            <Chip size="small" variant="outlined" color={report.evidence.focusIndicatorsMissing ? "warning" : "default"}
+                  label={`keyboard: ${report.evidence.focusableTraced} traced${report.evidence.focusIndicatorsMissing ? ` · ${report.evidence.focusIndicatorsMissing} no focus ring` : ""}`} />
+          </Tooltip>
+        )}
         <Typography variant="caption" color="text.secondary" sx={{ ml: "auto" }}>
           {new Date(report.generatedAt).toLocaleString()}
         </Typography>
       </Stack>
+
+      {report.evidence && report.evidence.unverified > 0 && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          {report.evidence.unverified} of {report.evidence.verified + report.evidence.unverified} fixes cite
+          evidence that could not be traced back to the captured page. They are marked unverified below —
+          confirm those before acting on them.
+        </Alert>
+      )}
 
       <Typography variant="overline">Executive summary</Typography>
       <Typography variant="body2" sx={{ mb: 2 }}>{report.executiveSummary}</Typography>
@@ -51,19 +76,49 @@ export default function AiReportPanel({ report }: { report: AiReport }) {
       <Stack spacing={2} sx={{ mt: 1 }}>
         {report.fixes.map((f, i) => (
           <Box key={i}>
-            <Stack direction="row" spacing={1} alignItems="center">
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
               <SeverityChip level={f.impact} />
+              {f.measured ? (
+                <Tooltip title="Measured deterministically by walking the focus order and reading computed focus styles. Not an AI judgement — it cannot be a hallucination.">
+                  <Chip size="small" label="measured" color="success"
+                        sx={{ height: 20, fontSize: 10.5, fontWeight: 700 }} />
+                </Tooltip>
+              ) : f.evidenceStatus === "verified" ? (
+                <Tooltip title="The cited evidence was found verbatim in the captured page.">
+                  <VerifiedIcon fontSize="small" sx={{ color: "#7BE8B0" }} />
+                </Tooltip>
+              ) : f.evidenceStatus === "unverified" ? (
+                <Tooltip title="The cited evidence could NOT be found in the captured page. Confirm manually before acting on this fix.">
+                  <HelpOutlineIcon fontSize="small" sx={{ color: "#FFB35C" }} />
+                </Tooltip>
+              ) : null}
               <Typography sx={{ fontWeight: 600 }}>{f.title}</Typography>
               <Typography variant="caption" color="text.secondary">{f.rule}</Typography>
+              {f.wcag?.length ? (
+                <Chip size="small" variant="outlined" label={`WCAG ${f.wcag.join(", ")}`} sx={{ height: 20, fontSize: 10.5 }} />
+              ) : null}
+              {f.scenario && <Chip size="small" variant="outlined" label={f.scenario} sx={{ height: 20, fontSize: 10.5 }} />}
             </Stack>
             <Typography variant="body2" sx={{ my: 0.75 }}>{f.explanation}</Typography>
+
+            {f.evidence && (
+              <>
+                <Typography variant="overline">Evidence{f.selector ? ` · ${f.selector}` : ""}</Typography>
+                <CodeBlock code={f.evidence} />
+              </>
+            )}
+            {f.screenshot && (
+              <ElementEvidence node={{ target: f.selector ?? "", html: "", failureSummary: "", screenshot: f.screenshot }} />
+            )}
+            {!f.measured && (
             <Tabs value={tabs[i] ?? 0} onChange={(_, v) => setTabs({ ...tabs, [i]: v })}
                   sx={{ minHeight: 34, mb: 1 }}>
               {frameworks.map((fw) => (
                 <Tab key={fw} label={fw.toUpperCase()} sx={{ minHeight: 34, py: 0 }} />
               ))}
             </Tabs>
-            <CodeBlock code={f[frameworks[tabs[i] ?? 0]]} />
+            )}
+            {!f.measured && <CodeBlock code={f[frameworks[tabs[i] ?? 0]]} />}
           </Box>
         ))}
       </Stack>

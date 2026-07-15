@@ -22,6 +22,8 @@ import { OVERLAY_SOURCE } from "./overlay.mjs";
 import { TOOLBAR_SOURCE } from "./toolbar.mjs";
 import { createCrawler } from "./crawler.mjs";
 import { generateAiReport } from "./report.mjs";
+import { deduplicate, generateExecutiveSummary } from "./report-site.mjs";
+import { buildSiteReport } from "./report-site-html.mjs";
 import { AI_PROVIDER_DEFAULTS, aiChat } from "./ai.mjs";
 import { createRecorder } from "./recorder.mjs";
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -30,7 +32,17 @@ import { join } from "node:path";
 import { runExpertAudit } from "./expert-audit.mjs";
 import { runCrossCheckAudit } from "./cross-check.mjs";
 import { captureElementScreenshots, installHighlighter } from "./element-shots.mjs";
-import { sessions, settings, audit, logs } from "./db.mjs";
+import { captureKeyboardEvidence } from "./keyboard-evidence.mjs";
+import { createCrawlExplorer } from "./crawl-explorer.mjs";
+import { browserStatus, createBrowserInstaller } from "./browser-setup.mjs";
+import {
+  toolchainStatus, listAllDevices, bootAndroidEmulator, bootIosSimulator,
+  listAndroidApps, launchAndroidApp, listIosApps, launchIosApp
+} from "./mobile/device.mjs";
+import { scanMobile } from "./mobile/scanner.mjs";
+import { startFlow, flowStep, stopFlow, cancelFlow, flowStatus } from "./mobile/flow.mjs";
+import { renderMobileReportHtml } from "./mobile/report-html.mjs";
+import { sessions, settings, audit, logs, crawls } from "./db.mjs";
 import { encrypt, decrypt, maskScan, assertProviderAllowed } from "./security.mjs";
 import { compareScans } from "./compare.mjs";
 
@@ -45,8 +57,18 @@ let browser = null;
 let page = null;
 const crawler = createCrawler();
 const recorder = createRecorder();
+const explorer = createCrawlExplorer();
+const browserInstaller = createBrowserInstaller();
 
 app.post("/session/open", async (req, res) => {
+  // Fail with the actual cause, not a Playwright stack trace the user can't act on.
+  if (!browserStatus().installed) {
+    return res.status(412).json({
+      ok: false,
+      error: "The browser engine isn't installed yet.",
+      needsBrowser: true,
+    });
+  }
   try {
     if (recorder.state.active) recorder.stop(); // avoid a dangling listener on the old page object
     if (!browser) {
@@ -98,7 +120,7 @@ app.get("/record/status", (_req, res) => {
   res.json({ ok: true, active: recorder.state.active, entries: recorder.state.entries });
 });
 
-app.post("/scan/quick", async (_req, res) => {
+app.post("/scan/quick", async (req, res) => {
   if (!page) return res.status(400).json({ ok: false, error: "No browser session. Open one first." });
   try {
     await page.evaluate(axeSource);
@@ -150,6 +172,20 @@ app.post("/scan/quick", async (_req, res) => {
       }
     }
 
+    // Keyboard & focus evidence. axe cannot press Tab, so focus order, traps,
+    // hidden focus targets and missing focus rings are invisible to it — and were
+    // therefore invisible to the AI report. Captured here so the report can see them.
+    let keyboard = null;
+    if (req.body?.keyboardEvidence !== false) {
+      try {
+        keyboard = await captureKeyboardEvidence(page, { excludeChrome: false });
+      } catch (e) {
+        logs.add({ level: "warning", source: "scan",
+                   message: `Keyboard/focus evidence capture failed: ${String(e.message ?? e)}`,
+                   detail: e.stack, context: { url: page.url() } });
+      }
+    }
+
     const score = computeScore(violations);
     res.json({
       ok: true,
@@ -161,6 +197,7 @@ app.post("/scan/quick", async (_req, res) => {
       violations,
       screenshot,
       shotStats,
+      keyboard,
     });
   } catch (e) {
     logs.add({ level: "error", source: "scan", message: String(e.message ?? e),
@@ -335,6 +372,493 @@ app.post("/report/ai", async (req, res) => {
       detail: [e.raw ? "MODEL OUTPUT (truncated):\n" + e.raw : null, e.stack].filter(Boolean).join("\n\n"),
       context: { url: scan.url, provider: resolved.provider, model: resolved.model },
     });
+    res.status(500).json({ ok: false, error: String(e.message ?? e) });
+  }
+});
+
+
+// ---- Site report (multi-page, deduplicated) -----------------------------
+// A flat report of a 20-page scan repeats every footer issue 20 times. This
+// collapses shared chrome into one "site-wide" section, gives each finding a
+// stable id for ticketing, and writes a small static report site to disk.
+app.post("/report/site", async (req, res) => {
+  const scan = req.body?.scan;
+  if (!Array.isArray(scan?.pages) || !scan.pages.length) {
+    return res.status(400).json({
+      ok: false,
+      error: "A site report needs a multi-page scan. Run an AI Full Scan first.",
+    });
+  }
+
+  try {
+    const dedup = deduplicate(scan.pages);
+
+    // The summary is a bonus — if the AI is unreachable we still write the
+    // report rather than losing the whole thing.
+    let summary = null;
+    if (req.body?.summary !== false) {
+      try {
+        const ai = resolveAi(req.body?.ai);
+        const r = await generateExecutiveSummary(dedup, ai, { generatedAt: new Date().toISOString() });
+        summary = r.summary;
+        for (const w of r.warnings ?? []) {
+          logs.add({ level: "warning", source: "site-report", message: w.message, detail: w.detail });
+        }
+      } catch (e) {
+        logs.add({
+          level: "warning", source: "site-report",
+          message: `Executive summary skipped: ${String(e.message ?? e)}`,
+          detail: e.stack,
+        });
+      }
+    }
+
+    const files = buildSiteReport(dedup, summary, { generatedAt: new Date().toISOString() });
+
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    const dir = join(EXPORT_DIR, `a11y-report-${stamp}`);
+    mkdirSync(dir, { recursive: true });
+    for (const [name, html] of Object.entries(files)) {
+      writeFileSync(join(dir, name), html, "utf8");
+    }
+
+    audit.log("report.site", `${dedup.stats.pages} pages -> ${dir}`);
+    res.json({
+      ok: true,
+      dir,
+      index: join(dir, "index.html"),
+      files: Object.keys(files).length,
+      stats: dedup.stats,
+      hasSummary: !!summary,
+    });
+  } catch (e) {
+    logs.add({ level: "error", source: "site-report", message: String(e.message ?? e), detail: e.stack });
+    res.status(500).json({ ok: false, error: String(e.message ?? e) });
+  }
+});
+
+
+// ---- Crawl Explorer -----------------------------------------------------
+// Discover a site's pages and organise them into a tree the user can curate,
+// instead of trusting the AI crawler to wander somewhere useful. Crawling runs
+// inside the authenticated browser session when one is open — an anonymous
+// fetch of an enterprise app just maps the login page.
+app.post("/crawl/start", async (req, res) => {
+  if (explorer.state.running) {
+    return res.status(409).json({ ok: false, error: "A crawl is already running." });
+  }
+  const { source = "crawl", rootUrl, sitemapUrl, urls, name, maxPages, maxDepth } = req.body ?? {};
+
+  const seed = rootUrl || sitemapUrl || (Array.isArray(urls) && urls[0]);
+  if (!seed) return res.status(400).json({ ok: false, error: "A root URL, sitemap URL, or URL list is required." });
+
+  let origin;
+  try { origin = new URL(seed).origin; }
+  catch { return res.status(400).json({ ok: false, error: `Not a valid URL: ${seed}` }); }
+
+  try {
+    const crawlId = crawls.create({
+      name: name || origin,
+      rootUrl: rootUrl || origin,
+      source,
+      config: { maxPages: maxPages ?? 100, maxDepth: maxDepth ?? 3 },
+    });
+
+    audit.log("crawl.start", `${source} ${seed}`);
+
+    // Fire and forget — the UI polls /crawl/status. A 500-page sitemap would
+    // otherwise time out the request.
+    explorer.start(page, {
+      source,
+      rootUrl,
+      sitemapUrl,
+      urls,
+      maxPages: Math.min(Number(maxPages) || 100, 2000),
+      maxDepth: Math.min(Number(maxDepth) || 3, 10),
+      store: crawls,
+      crawlId,
+    }).catch((e) => {
+      logs.add({ level: "error", source: "crawl", message: String(e.message ?? e), detail: e.stack });
+    });
+
+    res.json({ ok: true, crawlId, usingSession: !!page });
+  } catch (e) {
+    logs.add({ level: "error", source: "crawl", message: String(e.message ?? e), detail: e.stack });
+    res.status(500).json({ ok: false, error: String(e.message ?? e) });
+  }
+});
+
+app.get("/crawl/status", (_req, res) => {
+  const s = explorer.state;
+  res.json({
+    ok: true,
+    running: s.running,
+    done: s.done,
+    crawlId: s.crawlId,
+    source: s.source,
+    discovered: s.discovered,
+    queued: s.queued,
+    currentUrl: s.currentUrl,
+    error: s.error,
+    log: s.log.slice(-12),
+  });
+});
+
+app.post("/crawl/stop", (_req, res) => {
+  explorer.stop();
+  res.json({ ok: true });
+});
+
+app.get("/crawls", (_req, res) => res.json({ ok: true, crawls: crawls.list() }));
+
+app.get("/crawls/:id", (req, res) => {
+  const c = crawls.get(+req.params.id);
+  c ? res.json({ ok: true, crawl: c }) : res.status(404).json({ ok: false, error: "Crawl not found." });
+});
+
+app.delete("/crawls/:id", (req, res) => {
+  audit.log("crawl.delete", req.params.id);
+  res.json({ ok: crawls.remove(+req.params.id) });
+});
+
+// Enable/disable pages for scanning. This is the user's curation, and a re-crawl
+// deliberately preserves it.
+app.patch("/crawls/:id/urls", (req, res) => {
+  const { urls, enabled } = req.body ?? {};
+  if (!Array.isArray(urls)) return res.status(400).json({ ok: false, error: "urls must be an array." });
+  const n = crawls.setEnabled(+req.params.id, urls, !!enabled);
+  res.json({ ok: true, updated: n });
+});
+
+// Re-crawl: refresh titles/status for selected URLs (or all enabled ones)
+// without discarding the enable/disable choices already made.
+app.post("/crawls/:id/recrawl", async (req, res) => {
+  if (explorer.state.running) {
+    return res.status(409).json({ ok: false, error: "A crawl is already running." });
+  }
+  const id = +req.params.id;
+  const c = crawls.get(id);
+  if (!c) return res.status(404).json({ ok: false, error: "Crawl not found." });
+
+  const urls = Array.isArray(req.body?.urls) && req.body.urls.length
+    ? req.body.urls
+    : c.urls.filter((u) => u.enabled).map((u) => u.url);
+
+  if (!urls.length) return res.status(400).json({ ok: false, error: "No URLs selected to re-crawl." });
+
+  audit.log("crawl.recrawl", `${id}: ${urls.length} url(s)`);
+  explorer.start(page, {
+    source: "list",
+    urls,
+    maxPages: urls.length,
+    store: crawls,
+    crawlId: id,
+  }).catch((e) => logs.add({ level: "error", source: "crawl", message: String(e.message ?? e) }));
+
+  res.json({ ok: true, crawlId: id, count: urls.length });
+});
+
+// Export/import the crawl configuration so a curated page set can be shared or
+// version-controlled rather than rebuilt by hand on every machine.
+app.get("/crawls/:id/export", (req, res) => {
+  const c = crawls.get(+req.params.id);
+  if (!c) return res.status(404).json({ ok: false, error: "Crawl not found." });
+  res.json({
+    ok: true,
+    config: {
+      format: "a11y-lens-crawl",
+      version: 1,
+      name: c.name,
+      rootUrl: c.root_url,
+      source: c.source,
+      exportedAt: new Date().toISOString(),
+      settings: c.config,
+      urls: c.urls.map((u) => ({
+        url: u.url,
+        parentUrl: u.parent_url,
+        depth: u.depth,
+        title: u.title,
+        enabled: u.enabled,
+      })),
+    },
+  });
+});
+
+app.post("/crawls/import", (req, res) => {
+  const cfg = req.body?.config ?? req.body;
+  if (!cfg?.urls || !Array.isArray(cfg.urls)) {
+    return res.status(400).json({ ok: false, error: "Not a valid A11y Lens crawl configuration." });
+  }
+  try {
+    const crawlId = crawls.create({
+      name: cfg.name || "Imported crawl",
+      rootUrl: cfg.rootUrl || cfg.urls[0]?.url || "",
+      source: "import",
+      config: cfg.settings ?? {},
+    });
+    const disabled = [];
+    for (const u of cfg.urls) {
+      if (!u?.url) continue;
+      crawls.upsertUrl(crawlId, {
+        url: u.url,
+        parentUrl: u.parentUrl ?? null,
+        depth: u.depth ?? 0,
+        title: u.title ?? null,
+      });
+      if (u.enabled === false) disabled.push(u.url);
+    }
+    // upsert defaults to enabled, so re-apply the exported disables.
+    if (disabled.length) crawls.setEnabled(crawlId, disabled, false);
+
+    audit.log("crawl.import", `${cfg.urls.length} url(s)`);
+    res.json({ ok: true, crawlId, imported: cfg.urls.length });
+  } catch (e) {
+    logs.add({ level: "error", source: "crawl", message: String(e.message ?? e), detail: e.stack });
+    res.status(500).json({ ok: false, error: String(e.message ?? e) });
+  }
+});
+
+
+// ---- Browser engine bootstrap -------------------------------------------
+// Chromium can't be bundled into an installer, and telling a QA tester to run
+// `npx playwright install` is useless — they have an MSI, not a terminal. We
+// ship Playwright's CLI and a Node runtime, so the app installs its own browser.
+app.get("/browser/status", (_req, res) => {
+  const st = browserStatus();
+  res.json({
+    ok: true,
+    ...st,
+    installing: browserInstaller.state.running,
+    progress: browserInstaller.state.progress,
+    installError: browserInstaller.state.error,
+  });
+});
+
+app.post("/browser/install", (_req, res) => {
+  if (browserInstaller.state.running) {
+    return res.status(409).json({ ok: false, error: "The browser engine is already downloading." });
+  }
+  if (browserStatus().installed) {
+    return res.json({ ok: true, alreadyInstalled: true });
+  }
+  audit.log("browser.install", "started");
+  browserInstaller.install();
+  res.json({ ok: true, started: true });
+});
+
+app.get("/browser/install/status", (_req, res) => {
+  const s = browserInstaller.state;
+  res.json({
+    ok: true,
+    running: s.running,
+    done: s.done,
+    error: s.error,
+    progress: s.progress,
+    log: s.log.slice(-10),
+  });
+});
+
+
+// ---- Mobile scanner (Android / iOS) --------------------------------------
+// A COMPLETELY SEPARATE engine from the web scanner. Native apps have no DOM,
+// so Playwright, axe-core, the crawler and the overlay have no meaning here and
+// none of them are used. Shared with the web engine: the AI layer, evidence
+// verification, sessions and logs — the parts that aren't web-specific.
+let mobileScanning = false;
+
+app.get("/mobile/toolchain", async (_req, res) => {
+  try {
+    res.json({ ok: true, ...(await toolchainStatus()) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message ?? e) });
+  }
+});
+
+app.get("/mobile/devices", async (_req, res) => {
+  try {
+    res.json({ ok: true, ...(await listAllDevices()) });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message ?? e) });
+  }
+});
+
+app.post("/mobile/boot", async (req, res) => {
+  const { platform, id } = req.body ?? {};
+  try {
+    const r = platform === "ios" ? await bootIosSimulator(id) : await bootAndroidEmulator(id);
+    audit.log("mobile.boot", `${platform} ${id}`);
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    logs.add({ level: "error", source: "mobile", message: String(e.message ?? e), detail: e.stack });
+    res.status(500).json({ ok: false, error: String(e.message ?? e), hint: e.hint ?? null });
+  }
+});
+
+app.post("/mobile/scan", async (req, res) => {
+  if (mobileScanning) {
+    return res.status(409).json({ ok: false, error: "A mobile scan is already running." });
+  }
+  const { platform, deviceId, aiReview } = req.body ?? {};
+  if (!["android", "ios"].includes(platform)) {
+    return res.status(400).json({ ok: false, error: "platform must be 'android' or 'ios'." });
+  }
+
+  let ai = null;
+  try { ai = resolveAi(req.body?.ai); } catch { /* AI is optional — the measured tier still runs */ }
+
+  mobileScanning = true;
+  try {
+    audit.log("mobile.scan", `${platform} ${deviceId ?? "default"}`);
+    const result = await scanMobile({ platform, deviceId, ai, aiReview: aiReview !== false });
+
+    for (const w of result.warnings ?? []) {
+      logs.add({ level: "warning", source: "mobile", message: w.message, detail: w.detail,
+                 context: { platform, deviceId } });
+    }
+
+    // Mobile scans are stored as sessions too, so comparison and history work
+    // exactly as they do for the web.
+    const scan = {
+      url: `${platform}://${result.app?.package ?? result.deviceId ?? "device"}`,
+      title: `${result.device?.model ?? platform} — ${result.app?.package ?? "screen"}`,
+      timestamp: result.timestamp,
+      score: Math.max(0, 100 - (result.counts.critical * 10 + result.counts.serious * 5 +
+                                result.counts.moderate * 2 + result.counts.minor)),
+      counts: result.counts,
+      violations: [],           // deliberately empty: these are not axe rules
+      mobile: result,
+    };
+    const cfg = securityConfig();
+    const id = sessions.save(cfg.masking ? maskScan(scan, { storeScreenshots: cfg.storeScreenshots }) : scan);
+
+    res.json({ ok: true, result, sessionId: id });
+  } catch (e) {
+    logs.add({ level: "error", source: "mobile", message: String(e.message ?? e),
+               detail: e.stack, context: { platform, deviceId } });
+    res.status(500).json({ ok: false, error: String(e.message ?? e), hint: e.hint ?? null });
+  } finally {
+    mobileScanning = false;
+  }
+});
+
+// ---- Mobile: app launcher -------------------------------------------------
+app.get("/mobile/apps", async (req, res) => {
+  const { platform, deviceId, all } = req.query ?? {};
+  try {
+    const includeSystem = all === "1" || all === "true";
+    const apps = platform === "ios"
+      ? await listIosApps(deviceId, { includeSystem })
+      : await listAndroidApps(deviceId, { includeSystem });
+    res.json({ ok: true, apps });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message ?? e), hint: e.hint ?? null });
+  }
+});
+
+app.post("/mobile/launch", async (req, res) => {
+  const { platform, deviceId, appId } = req.body ?? {};
+  if (!appId) return res.status(400).json({ ok: false, error: "appId is required." });
+  try {
+    const r = platform === "ios"
+      ? await launchIosApp(deviceId, appId)
+      : await launchAndroidApp(deviceId, appId);
+    audit.log("mobile.launch", `${platform} ${appId}`);
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    logs.add({ level: "error", source: "mobile", message: String(e.message ?? e), detail: e.stack });
+    res.status(500).json({ ok: false, error: String(e.message ?? e), hint: e.hint ?? null });
+  }
+});
+
+// ---- Mobile: flow scanning -------------------------------------------------
+// A user journey scanned one screen at a time, with cross-step deduplication.
+// The tester navigates the app by hand; every "step" is a full single-screen
+// scan of whatever is on screen right now.
+app.get("/mobile/flow/status", (_req, res) => res.json({ ok: true, ...flowStatus() }));
+
+app.post("/mobile/flow/start", (req, res) => {
+  const { platform, deviceId, name } = req.body ?? {};
+  if (!["android", "ios"].includes(platform)) {
+    return res.status(400).json({ ok: false, error: "platform must be 'android' or 'ios'." });
+  }
+  try {
+    audit.log("mobile.flow.start", `${platform} ${deviceId ?? "default"} "${name ?? ""}"`);
+    res.json({ ok: true, ...startFlow({ platform, deviceId, name }) });
+  } catch (e) {
+    res.status(409).json({ ok: false, error: String(e.message ?? e) });
+  }
+});
+
+app.post("/mobile/flow/step", async (req, res) => {
+  if (mobileScanning) {
+    return res.status(409).json({ ok: false, error: "A mobile scan is already running." });
+  }
+  let ai = null;
+  try { ai = resolveAi(req.body?.ai); } catch { /* AI is optional — the measured tier still runs */ }
+
+  mobileScanning = true;
+  try {
+    const { label, aiReview } = req.body ?? {};
+    const r = await flowStep({ ai, aiReview: aiReview !== false, label });
+    audit.log("mobile.flow.step", `step ${r.step.index} "${r.step.label}"`);
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    logs.add({ level: "error", source: "mobile", message: String(e.message ?? e), detail: e.stack });
+    res.status(500).json({ ok: false, error: String(e.message ?? e), hint: e.hint ?? null });
+  } finally {
+    mobileScanning = false;
+  }
+});
+
+app.post("/mobile/flow/stop", (req, res) => {
+  try {
+    const result = stopFlow();
+
+    // A finished flow is one session — history and comparison work unchanged.
+    const scan = {
+      url: `${result.platform}-flow://${result.name.replace(/\s+/g, "-").toLowerCase()}`,
+      title: `${result.name} — ${result.steps.length} steps`,
+      timestamp: result.timestamp,
+      score: Math.max(0, 100 - (result.counts.critical * 10 + result.counts.serious * 5 +
+                                result.counts.moderate * 2 + result.counts.minor)),
+      counts: result.counts,
+      violations: [],           // deliberately empty: these are not axe rules
+      mobile: result,
+    };
+    const cfg = securityConfig();
+    const id = sessions.save(cfg.masking ? maskScan(scan, { storeScreenshots: cfg.storeScreenshots }) : scan);
+    audit.log("mobile.flow.stop", `"${result.name}" ${result.steps.length} steps, ${result.findings.length} unique findings`);
+    res.json({ ok: true, result, sessionId: id });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e.message ?? e) });
+  }
+});
+
+app.post("/mobile/flow/cancel", (_req, res) => {
+  const r = cancelFlow();
+  if (r.name) audit.log("mobile.flow.cancel", r.name);
+  res.json({ ok: true, ...r });
+});
+
+// ---- Mobile: HTML report ---------------------------------------------------
+// Renders a self-contained .html file and writes it next to the web reports.
+app.post("/mobile/report/html", (req, res) => {
+  const { result, filename } = req.body ?? {};
+  if (!result || !Array.isArray(result.findings)) {
+    return res.status(400).json({ ok: false, error: "A mobile scan result is required." });
+  }
+  try {
+    const html = renderMobileReportHtml(result);
+    const base = (filename || `a11y-mobile-${result.flow ? "flow" : "scan"}-${
+      new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.html`)
+      .replace(/[/\\]/g, "_").replace(/\.\./g, "_");
+    mkdirSync(EXPORT_DIR, { recursive: true });
+    const path = join(EXPORT_DIR, base);
+    writeFileSync(path, html, "utf8");
+    audit.log("mobile.report", base);
+    res.json({ ok: true, path, dir: EXPORT_DIR });
+  } catch (e) {
+    logs.add({ level: "error", source: "mobile", message: String(e.message ?? e), detail: e.stack });
     res.status(500).json({ ok: false, error: String(e.message ?? e) });
   }
 });
@@ -585,13 +1109,35 @@ const server = app.listen(PORT, () => {
   console.log(`[a11y-sidecar] listening on http://localhost:${PORT} (pid ${process.pid})`);
 });
 
-server.on("error", (err) => {
+server.on("error", async (err) => {
   if (err.code === "EADDRINUSE") {
-    // Distinct exit code so the Rust side can react to this specifically rather
-    // than treating every startup failure the same way.
+    // The port is taken. Before treating that as a failure, find out BY WHAT.
+    //
+    // If it's already one of ours and it's healthy, there is nothing wrong: a
+    // second instance is simply redundant. Exit cleanly (0) so whatever launched
+    // us — `concurrently`, a dev script, a double-click — doesn't tear down the
+    // rest of the run over a non-problem.
+    //
+    // If it's something ELSE holding 8787, that IS a failure, and we say so.
+    try {
+      const res = await fetch(`http://localhost:${PORT}/health`, {
+        signal: AbortSignal.timeout(1500),
+      });
+      const body = await res.json();
+      if (body?.app === "a11y-lens-sidecar") {
+        console.log(
+          `[a11y-sidecar] an A11y Lens sidecar is already running on port ${PORT} ` +
+          `(pid ${body.pid}). Reusing it — nothing to do.`
+        );
+        process.exit(0);
+      }
+    } catch {
+      // No health response — so it isn't us.
+    }
+
     console.error(
-      `[a11y-sidecar] port ${PORT} is already in use. Another A11y Lens sidecar ` +
-      `(or another program) is holding it.`
+      `[a11y-sidecar] port ${PORT} is in use by another program. ` +
+      `Stop it, or set A11Y_SIDECAR_PORT to a free port.`
     );
     process.exit(3);
   }

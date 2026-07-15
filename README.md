@@ -39,13 +39,68 @@ Production note: wire `main.rs::start_sidecar` to spawn the bundled sidecar on a
 (dev mode uses `npm run sidecar`). End users need Playwright's Chromium once: `npx playwright install chromium`.
 
 ## Run it
+
 ```bash
 npm install
-npm i playwright axe-core express better-sqlite3 && npx playwright install chromium
-npm run sidecar          # terminal 1 — automation engine on :8787
-npm run tauri:dev        # terminal 2 — desktop app (or `npm run dev` for browser-only UI dev)
+npx playwright install chromium     # once — browser binaries can't be bundled
+
+npm run tauri:dev                   # ONE command: sidecar + UI + desktop window
 ```
-Flow: Scan Center → enter URL → **Open browser** → log in manually → **Quick Accessibility Scan**.
+
+That's it. `tauri:dev` starts the automation sidecar and the Vite dev server together
+(via `concurrently`), then opens the desktop window.
+
+Other entry points:
+
+| Command | What it runs |
+|---|---|
+| `npm run tauri:dev` | Sidecar + UI + desktop window (**the normal one**) |
+| `npm run dev` | Sidecar + UI in the browser — no Rust toolchain needed |
+| `npm run dev:ui` | Vite only, for pure UI work |
+| `npm run sidecar` | The automation engine on its own |
+
+**In the installed app you never start anything.** Tauri spawns and supervises the sidecar
+itself — health check, orphan cleanup, three retries, and a clean kill on exit.
+
+**Port 8787 conflicts sort themselves out.** If a healthy A11y Lens sidecar is already
+listening, a second one detects it, says so, and exits cleanly rather than killing your dev
+run. If something *else* is holding the port, it says that instead.
+
+### Troubleshooting: "TypeError: Failed to fetch"
+This means the UI can't reach the sidecar at `localhost:8787` — always start it separately first:
+```bash
+npm run sidecar
+```
+Keep that terminal open while using the app (`launch-dev.ps1` does this for you automatically).
+If it still fails, check the sidecar terminal for errors (e.g. missing Chromium — run `npx playwright install chromium`).
 
 ## Next phases (feed to Claude Code one at a time)
 Excel/PDF export · full ignore management (reason/owner/expiry).
+
+## Recent fixes & additions
+
+**HTML report was rendering blank** — fixed. The AI-fixes section in the exported interactive
+HTML report had an under-escaped `\n` inside a template literal, which embedded a literal
+newline byte into the generated `<script>` tag and broke it with a syntax error (so nothing
+on the page ever rendered). Verified fixed by actually executing the generated report's script
+in a real DOM (jsdom) and confirming zero errors, correct score/title/counts, working severity
+filters and search, and a correctly rendered AI report section.
+
+**Custom URL list for Full Scan** — optional, toggled by checkbox in Scan Center. Instead of
+letting the AI navigate on its own, upload a JSON file listing the exact pages to visit in order:
+```json
+{ "urls": ["/", "/pricing", "/about", "/contact", "/help/faq"] }
+```
+or a plain array: `["/pricing", "/about", "https://yourapp.com/help"]`. See `examples/url-list-example.json`.
+Same safety rules apply — every URL is checked against the origin of the open browser session;
+off-origin, non-http(s), duplicate, or malformed entries are skipped and logged, never followed.
+
+**Record path & scan path** — new section "2 · Record a path" in Scan Center. With a browser
+session open, click **Record path**, navigate the journey manually in Chrome (login, add to cart,
+checkout...), then **Stop recording**. Every page visited is captured in order (main-frame
+navigations only, consecutive duplicates deduped, capped at 200). The recorded path automatically
+becomes the custom URL list for Full Scan — hit the scan button and it revisits exactly those
+pages. **Save as JSON** exports the path for reuse or sharing; re-upload it later via the URL-list
+uploader. Sidecar endpoints: POST /record/start, POST /record/stop, GET /record/status.
+Recording is navigation-only by design — no clicks, form input, or timing are captured, which keeps
+replay deterministic and avoids storing anything sensitive typed during the session.

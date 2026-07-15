@@ -63,6 +63,10 @@ export function maskScan(scan, { storeScreenshots = false } = {}) {
     for (const n of v.nodes ?? []) {
       if (n.html) n.html = maskText(n.html);
       if (n.failureSummary) n.failureSummary = maskText(n.failureSummary);
+      // Per-element visual evidence is still a screenshot of a logged-in page —
+      // a cropped one, but a customer name can sit right next to the broken
+      // image. It follows the same opt-in rule as the full-page capture.
+      if (!storeScreenshots) delete n.screenshot;
     }
   // A full-page screenshot of a logged-in enterprise app can contain customer
   // names, addresses and order data. Dropping it is the safe default; keeping it

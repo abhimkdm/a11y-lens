@@ -23,7 +23,6 @@ param([switch]$Universal, [switch]$SkipSidecar)
 
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
-. (Join-Path $PSScriptRoot "pkg-prereqs.ps1")
 
 $osName = uname
 if ($osName -ne "Darwin") {
@@ -51,16 +50,17 @@ npm i playwright axe-core express better-sqlite3
 $arch = (uname -m)
 if ($arch -eq "arm64") {
   $rustTarget = "aarch64-apple-darwin"
+  $pkgTarget = "node18-macos-arm64"
 }
 else {
   $rustTarget = "x86_64-apple-darwin"
+  $pkgTarget = "node18-macos-x64"
 }
-$pkgTarget = Get-PkgMacTarget -Arch $arch
 
 if (-not $SkipSidecar) {
   Write-Host ("[2/4] Compiling sidecar for {0}..." -f $rustTarget) -ForegroundColor Cyan
-  Write-Host ("  pkg target: {0}" -f $pkgTarget) -ForegroundColor DarkGray
-  npx pkg sidecar/server.mjs `
+  # @yao-pkg/pkg is the maintained fork of vercel/pkg.
+  npx --yes @yao-pkg/pkg sidecar/server.mjs `
     --targets $pkgTarget `
     --output ("src-tauri/sidecar/a11y-sidecar-" + $rustTarget)
   if ($LASTEXITCODE -ne 0) {
@@ -72,14 +72,14 @@ if (-not $SkipSidecar) {
   if ($Universal) {
     if ($rustTarget -eq "aarch64-apple-darwin") {
       $otherTarget = "x86_64-apple-darwin"
-      $otherPkg = Get-PkgMacTarget -Arch "x86_64"
+      $otherPkg = "node18-macos-x64"
     }
     else {
       $otherTarget = "aarch64-apple-darwin"
-      $otherPkg = Get-PkgMacTarget -Arch "arm64"
+      $otherPkg = "node18-macos-arm64"
     }
     Write-Host ("        ...and {0} for a universal bundle" -f $otherTarget) -ForegroundColor Cyan
-    npx pkg sidecar/server.mjs --targets $otherPkg --output ("src-tauri/sidecar/a11y-sidecar-" + $otherTarget)
+    npx --yes @yao-pkg/pkg sidecar/server.mjs --targets $otherPkg --output ("src-tauri/sidecar/a11y-sidecar-" + $otherTarget)
     chmod +x ("src-tauri/sidecar/a11y-sidecar-" + $otherTarget)
   }
 }

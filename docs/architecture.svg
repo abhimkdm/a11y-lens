@@ -154,7 +154,7 @@
     <line x1="234" y1="1450" x2="262" y2="1450" stroke="#9AA7B4" stroke-width="1.5" marker-end="url(#ar)"/>
     <rect x="264" y="1428" width="150" height="44" rx="22" fill="#161C24" stroke="#3a4655"/><text x="339" y="1455" text-anchor="middle">2 · Log in</text>
     <line x1="414" y1="1450" x2="442" y2="1450" stroke="#9AA7B4" stroke-width="1.5" marker-end="url(#ar)"/>
-    <rect x="444" y="1428" width="190" height="44" rx="22" fill="#12241c" stroke="#7BE8B0"/><text x="539" y="1455" text-anchor="middle" fill="#7BE8B0">3 · AI Full Scan</text>
+    <rect x="444" y="1428" width="190" height="44" rx="22" fill="#12241c" stroke="#7BE8B0"/><text x="539" y="1455" text-anchor="middle" fill="#7BE8B0">3 · Full Scan</text>
     <line x1="634" y1="1450" x2="662" y2="1450" stroke="#9AA7B4" stroke-width="1.5" marker-end="url(#ar)"/>
     <rect x="664" y="1428" width="220" height="44" rx="22" fill="#161C24" stroke="#3a4655"/><text x="774" y="1455" text-anchor="middle">4 · AI report + fixes</text>
     <line x1="884" y1="1450" x2="912" y2="1450" stroke="#9AA7B4" stroke-width="1.5" marker-end="url(#ar)"/>

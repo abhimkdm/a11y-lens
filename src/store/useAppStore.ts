@@ -2,7 +2,14 @@ import { create } from "zustand";
 
 export type Severity = "critical" | "serious" | "moderate" | "minor";
 
-export interface ViolationNode { target: string; html: string; failureSummary: string }
+export interface ViolationNode {
+  target: string;
+  html: string;
+  failureSummary: string;
+  screenshot?: string | null;              // base64 JPEG of the failing element, highlighted
+  screenshotSkipped?: "budget" | "not-found" | "capture-failed" | null;
+  elementTiny?: boolean;                   // 0x0 / 1x1 element — a crop would be meaningless
+}
 export interface Violation {
   id: string; impact: Severity; description: string; help: string;
   helpUrl: string; wcag: string[]; nodes: ViolationNode[];
@@ -10,11 +17,22 @@ export interface Violation {
 export interface AiFix {
   rule: string; impact: Severity; title: string; explanation: string;
   html: string; react: string; angular: string;
+  selector?: string;
+  evidence?: string;
+  evidenceStatus?: "verified" | "unverified";
+  scenario?: string | null;
+  screenshot?: string | null;
+  measured?: boolean;          // deterministic keyboard/focus probe — not an AI opinion
+  wcag?: string[];
 }
 export interface AiReport {
   executiveSummary: string; businessImpact: string;
   fixes: AiFix[]; quickWins: string[];
   generatedAt: string; provider: string;
+  evidence?: {
+    scenarios: number; imagesUsed: number; verified: number; unverified: number;
+    keyboardMeasured?: number; focusIndicatorsMissing?: number; focusableTraced?: number;
+  };
 }
 export type Agreement = "consensus" | "confirmed" | "single" | "deterministic";
 export interface ExpertFinding {
@@ -79,6 +97,9 @@ interface AppState {
   history: ScanResult[];
   ignored: Record<string, { reason: string; expiry?: string }>;
   aiProvider: { provider: string; model: string; apiKey: string; baseUrl: string };
+  // A curated page set handed over from Crawl Explorer to Scan Center.
+  pendingUrlList: string[] | null;
+  applicationUrl: string;
   setSessionOpen: (v: boolean) => void;
   setScanning: (v: AppState["scanning"]) => void;
   setScan: (r: ScanResult) => void;
@@ -88,6 +109,8 @@ interface AppState {
   ignoreRule: (ruleId: string, reason: string, expiry?: string) => void;
   unignoreRule: (ruleId: string) => void;
   setAiProvider: (p: Partial<AppState["aiProvider"]>) => void;
+  setPendingUrlList: (urls: string[] | null) => void;
+  setApplicationUrl: (url: string) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -97,6 +120,8 @@ export const useAppStore = create<AppState>((set) => ({
   history: [],
   ignored: {},
   aiProvider: { provider: "ollama", model: "llama3.1", apiKey: "", baseUrl: "" },
+  pendingUrlList: null,
+  applicationUrl: "https://",
   setSessionOpen: (v) => set({ sessionOpen: v }),
   setScanning: (v) => set({ scanning: v }),
   setScan: (r) => set((s) => ({ currentScan: r, history: [r, ...s.history].slice(0, 50) })),
@@ -123,4 +148,6 @@ export const useAppStore = create<AppState>((set) => ({
   unignoreRule: (ruleId) =>
     set((s) => { const i = { ...s.ignored }; delete i[ruleId]; return { ignored: i }; }),
   setAiProvider: (p) => set((s) => ({ aiProvider: { ...s.aiProvider, ...p } })),
+  setPendingUrlList: (urls) => set({ pendingUrlList: urls }),
+  setApplicationUrl: (url) => set({ applicationUrl: url }),
 }));

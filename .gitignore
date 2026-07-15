@@ -6,11 +6,15 @@ dist/
 *.tsbuildinfo
 vite.config.ts.timestamp-*.mjs
 
+# Sidecar staging (npm run sidecar:build → bundled as Tauri resources)
+dist-sidecar/
+dist-sidecar/sidecar/
+
 # Rust / Tauri
 src-tauri/target/
 
-# Compiled sidecar binaries (built by scripts/build-*.ps1)
-src-tauri/sidecar/a11y-sidecar-*
+# Bundled Node runtime copied at build time (a11y-node-<target-triple>[.exe])
+src-tauri/sidecar/
 
 # pkg cache
 .pkg-cache/
@@ -40,8 +44,12 @@ Desktop.ini
 
 # Test / coverage
 coverage/
-
-# Playwright (if installed locally in project)
 playwright-report/
 test-results/
 blob-report/
+
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.png binary
+*.ico binary
+*.icns binary

@@ -64,6 +64,33 @@ db.exec(`
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS crawls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    root_url TEXT NOT NULL,
+    source TEXT NOT NULL,              -- crawl | sitemap | list | import
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    config TEXT                        -- JSON: maxPages, maxDepth, includeExternal...
+  );
+  CREATE TABLE IF NOT EXISTS crawl_urls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    crawl_id INTEGER NOT NULL,
+    url TEXT NOT NULL,
+    parent_url TEXT,                   -- NULL for roots; this is what makes it a tree
+    depth INTEGER NOT NULL DEFAULT 0,
+    title TEXT,
+    status_code INTEGER,
+    content_type TEXT,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    discovered_at TEXT NOT NULL,
+    last_scanned TEXT,
+    last_score INTEGER,
+    note TEXT,
+    UNIQUE(crawl_id, url)
+  );
+  CREATE INDEX IF NOT EXISTS idx_crawl_urls_crawl ON crawl_urls(crawl_id);
+  CREATE INDEX IF NOT EXISTS idx_crawl_urls_parent ON crawl_urls(crawl_id, parent_url);
   CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp TEXT NOT NULL,
@@ -139,6 +166,88 @@ export const logs = {
   clear() {
     db.prepare("DELETE FROM logs").run();
     return true;
+  },
+};
+
+export const crawls = {
+  create({ name, rootUrl, source, config }) {
+    const now = new Date().toISOString();
+    const info = db.prepare(
+      `INSERT INTO crawls (name, root_url, source, created_at, updated_at, config)
+       VALUES (@name, @rootUrl, @source, @now, @now, @config)`
+    ).run({ name, rootUrl, source, now, config: JSON.stringify(config ?? {}) });
+    return Number(info.lastInsertRowid);
+  },
+
+  list() {
+    return db.prepare(
+      `SELECT c.*,
+              (SELECT COUNT(*) FROM crawl_urls u WHERE u.crawl_id = c.id) AS urlCount,
+              (SELECT COUNT(*) FROM crawl_urls u WHERE u.crawl_id = c.id AND u.enabled = 1) AS enabledCount
+       FROM crawls c ORDER BY c.updated_at DESC`
+    ).all().map((r) => ({ ...r, config: r.config ? JSON.parse(r.config) : {} }));
+  },
+
+  get(id) {
+    const c = db.prepare("SELECT * FROM crawls WHERE id = ?").get(id);
+    if (!c) return null;
+    const urls = db.prepare(
+      "SELECT * FROM crawl_urls WHERE crawl_id = ? ORDER BY depth, url"
+    ).all(id).map((u) => ({ ...u, enabled: !!u.enabled }));
+    return { ...c, config: c.config ? JSON.parse(c.config) : {}, urls };
+  },
+
+  remove(id) {
+    db.prepare("DELETE FROM crawl_urls WHERE crawl_id = ?").run(id);
+    return db.prepare("DELETE FROM crawls WHERE id = ?").run(id).changes > 0;
+  },
+
+  touch(id) {
+    db.prepare("UPDATE crawls SET updated_at = ? WHERE id = ?").run(new Date().toISOString(), id);
+  },
+
+  // Insert or update a discovered URL. A re-crawl must not duplicate rows, and it
+  // must not silently reset the enable/disable choices the user already made —
+  // that is their curation, and losing it would be worse than a stale title.
+  upsertUrl(crawlId, u) {
+    db.prepare(
+      `INSERT INTO crawl_urls (crawl_id, url, parent_url, depth, title, status_code, content_type, enabled, discovered_at)
+       VALUES (@crawlId, @url, @parentUrl, @depth, @title, @statusCode, @contentType, 1, @now)
+       ON CONFLICT(crawl_id, url) DO UPDATE SET
+         title = COALESCE(excluded.title, crawl_urls.title),
+         status_code = COALESCE(excluded.status_code, crawl_urls.status_code),
+         content_type = COALESCE(excluded.content_type, crawl_urls.content_type),
+         parent_url = COALESCE(crawl_urls.parent_url, excluded.parent_url),
+         depth = MIN(crawl_urls.depth, excluded.depth)`
+    ).run({
+      crawlId,
+      url: u.url,
+      parentUrl: u.parentUrl ?? null,
+      depth: u.depth ?? 0,
+      title: u.title ?? null,
+      statusCode: u.statusCode ?? null,
+      contentType: u.contentType ?? null,
+      now: new Date().toISOString(),
+    });
+  },
+
+  setEnabled(crawlId, urls, enabled) {
+    const stmt = db.prepare("UPDATE crawl_urls SET enabled = ? WHERE crawl_id = ? AND url = ?");
+    for (const url of urls) stmt.run(enabled ? 1 : 0, crawlId, url);
+    this.touch(crawlId);
+    return urls.length;
+  },
+
+  markScanned(crawlId, url, score) {
+    db.prepare(
+      "UPDATE crawl_urls SET last_scanned = ?, last_score = ? WHERE crawl_id = ? AND url = ?"
+    ).run(new Date().toISOString(), score ?? null, crawlId, url);
+  },
+
+  enabledUrls(crawlId) {
+    return db.prepare(
+      "SELECT url FROM crawl_urls WHERE crawl_id = ? AND enabled = 1 ORDER BY depth, url"
+    ).all(crawlId).map((r) => r.url);
   },
 };
 

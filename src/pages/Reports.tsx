@@ -10,6 +10,7 @@ import CompareArrowsIcon from "@mui/icons-material/CompareArrows";
 import SeverityChip from "../components/SeverityChip";
 import { api } from "../services/api";
 import { buildHtmlReport } from "../utils/reportHtml";
+import { useAppStore } from "../store/useAppStore";
 import type { Severity } from "../store/useAppStore";
 
 interface SessionRow {
@@ -85,6 +86,26 @@ export default function Reports() {
   const [cmp, setCmp] = useState<Comparison | null>(null);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
+  const [busy, setBusy] = useState(0);
+  const { aiProvider } = useAppStore();
+
+  // A multi-page scan deserves a multi-page report: shared chrome issues collapsed
+  // into one site-wide section, stable ids for ticketing, and an AI executive
+  // summary over the whole site rather than one page.
+  const siteReport = async (row: SessionRow) => {
+    setError(""); setSaved(""); setBusy(row.id);
+    const r0 = await api.getSession(row.id).catch(() => null);
+    if (!r0?.ok) { setBusy(0); setError("Could not load session."); return; }
+    const r = await api.siteReport(r0.scan, aiProvider).catch((e) => ({ ok: false, error: String(e) }));
+    setBusy(0);
+    if (r.ok) {
+      setSaved(
+        `${r.files} files written to ${r.dir} — ${r.stats.siteWideFindings} site-wide findings ` +
+        `(${r.stats.duplicatesCollapsed} duplicate rows collapsed)` +
+        (r.hasSummary ? " · executive summary included" : " · no executive summary (check Logs)")
+      );
+    } else setError(r.error ?? "Site report failed");
+  };
   const [offline, setOffline] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -205,6 +226,17 @@ export default function Reports() {
                       onClick={() => exportSession(row, "html")}>HTML</Button>
               <Button size="small" variant="outlined" startIcon={<DataObjectIcon />}
                       onClick={() => exportSession(row, "session")}>Session</Button>
+              {row.kind === "full" && (
+                <Tooltip title="Multi-page report: shared chrome issues collapsed into one site-wide section, stable finding IDs, and an AI executive summary.">
+                  <span>
+                    <Button size="small" variant="contained" color="secondary"
+                            disabled={busy === row.id}
+                            onClick={() => siteReport(row)}>
+                      {busy === row.id ? "Building…" : "Site report"}
+                    </Button>
+                  </span>
+                </Tooltip>
+              )}
               <Tooltip title="Delete session">
                 <IconButton size="small" aria-label={`Delete session ${row.id}`}
                   onClick={() => api.deleteSession(row.id).then(refresh)}>

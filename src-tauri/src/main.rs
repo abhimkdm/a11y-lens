@@ -43,10 +43,14 @@ struct SidecarProcess {
 /// Is *our* sidecar already listening and healthy? If so we reuse it rather than
 /// starting a second one that would only lose the port race anyway.
 fn healthy_sidecar_running() -> bool {
-    let Ok(mut stream) = TcpStream::connect_timeout(
-        &format!("127.0.0.1:{PORT}").parse().unwrap(),
-        Duration::from_millis(400),
-    ) else {
+    // Annotate the address type explicitly: `.parse()` has no other clue what to
+    // produce here, and leaving it to inference is a needless gamble.
+    let addr: std::net::SocketAddr = match format!("127.0.0.1:{PORT}").parse() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+
+    let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(400)) else {
         return false; // nothing listening
     };
 
@@ -69,8 +73,9 @@ fn healthy_sidecar_running() -> bool {
 fn kill_orphan_sidecars() {
     #[cfg(target_os = "windows")]
     {
+        // Must match Tauri's externalBin name + target triple (not "a11y-node.exe").
         let _ = std::process::Command::new("taskkill")
-            .args(["/F", "/IM", "a11y-node.exe", "/T"])
+            .args(["/F", "/IM", "a11y-node-x86_64-pc-windows-msvc.exe", "/T"])
             .creation_flags(0x08000000) // CREATE_NO_WINDOW — don't flash a console
             .status();
     }
@@ -84,22 +89,35 @@ fn kill_orphan_sidecars() {
 }
 
 fn spawn_sidecar(app: &tauri::AppHandle, last_error: Arc<Mutex<String>>) -> Result<CommandChild, String> {
-    // The sidecar source ships as a Tauri resource next to the app.
-    let script = app
+    // Ship layout: <resource>/sidecar/server.mjs + <resource>/node_modules/...
+    let resource_dir = app
         .path()
-        .resolve("sidecar/server.mjs", tauri::path::BaseDirectory::Resource)
-        .map_err(|e| format!("could not locate the bundled sidecar script: {e}"))?;
+        .resource_dir()
+        .map_err(|e| format!("could not locate bundled resources: {e}"))?;
+    // Windows returns `\\?\C:\...` here. Node 24 dies on that as the main module
+    // (EISDIR: lstat 'C:'). Stripping the prefix is not enough when the absolute
+    // path also contains `\a` etc. — so we set cwd and pass a relative script path.
+    let resource_dir = dunce::simplified(&resource_dir).to_path_buf();
 
-    let script_str = script
-        .to_str()
-        .ok_or_else(|| "sidecar path is not valid UTF-8".to_string())?
-        .to_string();
+    let script = resource_dir.join("sidecar").join("server.mjs");
+    if !script.is_file() {
+        return Err(format!(
+            "bundled sidecar script not found at {}",
+            script.display()
+        ));
+    }
+
+    println!(
+        "[a11y-lens] spawning sidecar: cwd={}, script=sidecar/server.mjs",
+        resource_dir.display()
+    );
 
     let (mut rx, child) = app
         .shell()
         .sidecar("a11y-node")
         .map_err(|e| format!("bundled Node runtime not found: {e}"))?
-        .args(["--no-warnings=ExperimentalWarning", &script_str])
+        .current_dir(&resource_dir)
+        .args(["--no-warnings=ExperimentalWarning", "sidecar/server.mjs"])
         .spawn()
         .map_err(|e| format!("failed to start the sidecar: {e}"))?;
 

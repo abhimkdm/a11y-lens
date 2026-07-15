@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  Paper, Typography, Stack, Button, TextField, Alert, LinearProgress, Grid2 as Grid, Chip, Box,
-  Checkbox, FormControlLabel, MenuItem, Tooltip,
+    Paper, Typography, Stack, Button, TextField, Alert, LinearProgress, Grid2 as Grid, Chip, Box,
+    Checkbox, FormControlLabel, MenuItem, Tooltip,
 } from "@mui/material";
 import BoltIcon from "@mui/icons-material/Bolt";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
@@ -18,6 +18,7 @@ import { api } from "../services/api";
 import { useAppStore } from "../store/useAppStore";
 import ViolationList from "../components/ViolationList";
 import AiReportPanel from "../components/AiReportPanel";
+import BrowserSetup from "../components/BrowserSetup";
 import ExpertAuditPanel from "../components/ExpertAuditPanel";
 import ScoreRing from "../components/ScoreRing";
 
@@ -28,9 +29,11 @@ import ScoreRing from "../components/ScoreRing";
 const SHOW_EXPERT_AUDIT = false;
 
 export default function ScanCenter() {
-  const [url, setUrl] = useState("https://");
   const [error, setError] = useState("");
-  const { sessionOpen, setSessionOpen, scanning, setScanning, currentScan, setScan, ignored, aiProvider, attachAiReport, attachExpertAudit, setScanId } = useAppStore();
+  const {
+    sessionOpen, setSessionOpen, scanning, setScanning, currentScan, setScan, ignored, aiProvider,
+    attachAiReport, attachExpertAudit, setScanId, applicationUrl, setApplicationUrl,
+  } = useAppStore();
 
   // An AI report / expert audit is produced AFTER the scan is first saved. Without
   // writing it back, the stored session (and therefore every export from Reports)
@@ -90,7 +93,7 @@ export default function ScanCenter() {
   const [useUrlList, setUseUrlList] = useState(false);
   const [urlList, setUrlList] = useState<string[]>([]);
   const [urlListError, setUrlListError] = useState("");
-  const [urlListSource, setUrlListSource] = useState(""); // filename, or "Recorded path"
+  const [urlListSource, setUrlListSource] = useState(""); // filename, "Recorded path", or "Crawl Explorer"
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [recording, setRecording] = useState(false);
@@ -160,6 +163,21 @@ export default function ScanCenter() {
     }
   };
 
+  // A curated page set handed over from Crawl Explorer. Picking it up here is
+  // the whole point of that module: a human chose these pages, so the scan should
+  // use exactly them rather than letting the AI wander.
+  const { pendingUrlList, setPendingUrlList } = useAppStore();
+  useEffect(() => {
+    if (pendingUrlList?.length) {
+      setUrlList(pendingUrlList);
+      setUrlListSource(`Crawl Explorer (${pendingUrlList.length} pages)`);
+      setUrlListError("");
+      setUseUrlList(true);
+      setPendingUrlList(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingUrlList]);
+
   const stopPolling = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
   useEffect(() => () => {
     stopPolling();
@@ -215,7 +233,7 @@ export default function ScanCenter() {
 
   const open = async () => {
     setError("");
-    const r = await api.openSession(url).catch((e) => ({ ok: false, error: String(e) }));
+    const r = await api.openSession(applicationUrl).catch((e) => ({ ok: false, error: String(e) }));
     if (r.ok) setSessionOpen(true);
     else setError(r.error ?? "Could not reach the sidecar. Run: npm run sidecar");
   };
@@ -241,11 +259,13 @@ export default function ScanCenter() {
 
   return (
     <Stack spacing={2.5}>
+      <BrowserSetup />
+
       <Paper sx={{ p: 3 }}>
         <Typography variant="overline">1 · Browser session</Typography>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ mt: 1.5 }}>
-          <TextField fullWidth size="small" label="Application URL" value={url}
-                     onChange={(e) => setUrl(e.target.value)} />
+          <TextField fullWidth size="small" label="Application URL" value={applicationUrl}
+                     onChange={(e) => setApplicationUrl(e.target.value)} />
           <Button variant="outlined" startIcon={<OpenInBrowserIcon />} onClick={open}
                   sx={{ whiteSpace: "nowrap" }}>
             Open browser
@@ -316,7 +336,7 @@ export default function ScanCenter() {
             ) : (
               <Button fullWidth variant="outlined" size="large" startIcon={<AutoAwesomeIcon />}
                       disabled={!sessionOpen || scanning !== "idle"} onClick={fullScan}>
-                AI Full Scan
+                Full Scan
               </Button>
             )}
           </Grid>
@@ -348,7 +368,9 @@ export default function ScanCenter() {
               </Button>
               {urlListSource && !urlListError && (
                 <Chip size="small" color="success" label={
-                  urlListSource.startsWith("Recorded") ? urlListSource : `${urlListSource} · ${urlList.length} URL${urlList.length === 1 ? "" : "s"}`
+                  urlListSource.startsWith("Recorded") || urlListSource.startsWith("Crawl Explorer")
+                    ? urlListSource
+                    : `${urlListSource} · ${urlList.length} URL${urlList.length === 1 ? "" : "s"}`
                 } />
               )}
               {urlListSource && urlListError && (

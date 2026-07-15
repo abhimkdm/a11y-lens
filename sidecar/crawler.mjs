@@ -14,6 +14,8 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { aiChat } from "./ai.mjs";
+import { captureElementScreenshots, installHighlighter } from "./element-shots.mjs";
+import { captureKeyboardEvidence } from "./keyboard-evidence.mjs";
 
 const require = createRequire(import.meta.url);
 const axeSource = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
@@ -91,7 +93,7 @@ export function createCrawler() {
     }
   }
 
-  async function scanPage(page) {
+  async function scanPage(page, opts = {}) {
     await page.evaluate(axeSource);
     const results = await page.evaluate(async () =>
       window.axe.run(document, {
@@ -106,13 +108,26 @@ export function createCrawler() {
         resultTypes: ["violations"],
       })
     );
-    return results.violations.map(v => ({
+    const violations = results.violations.map(v => ({
       id: v.id, impact: v.impact ?? "minor", description: v.description, help: v.help,
       helpUrl: v.helpUrl, wcag: v.tags.filter(t => /^wcag\d/.test(t)),
       nodes: v.nodes.slice(0, 15).map(n => ({
         target: n.target.join(" "), html: n.html, failureSummary: n.failureSummary,
       })),
     }));
+
+    // Visual evidence per element. Capped harder than a quick scan — a 10-page
+    // crawl at 40 shots/page would be both slow and enormous.
+    if (opts.elementScreenshots !== false) {
+      try {
+        await installHighlighter(page);
+        const r = await captureElementScreenshots(page, violations, { maxPerRule: 2, maxTotal: 10 });
+        return r.violations;
+      } catch {
+        return violations;   // never lose a page's findings over a screenshot
+      }
+    }
+    return violations;
   }
 
   async function run(page, opts) {
@@ -130,12 +145,12 @@ export function createCrawler() {
     state.error = null;
     state.result = null;
 
-    function recordScan(url, title, violations) {
+    function recordScan(url, title, violations, keyboard = null) {
       const u = new URL(url);
       for (const v of violations) {
         const cur = merged.get(v.id) ?? { ...v, nodes: [] };
         for (const n of v.nodes)
-          cur.nodes.push({ ...n, failureSummary: `[${u.pathname}] ${n.failureSummary ?? ""}` });
+          cur.nodes.push({ ...n, page: u.pathname, failureSummary: `[${u.pathname}] ${n.failureSummary ?? ""}` });
         merged.set(v.id, cur);
       }
       const counts = { critical: 0, serious: 0, moderate: 0, minor: 0 };
@@ -145,6 +160,14 @@ export function createCrawler() {
       state.pagesScanned.push({
         url, title, score: Math.max(0, 100 - penalty),
         counts, violationRuleCount: violations.length,
+        // Keep the per-page findings. Merging everything into one flat list
+        // destroys the information the site report needs: whether a rule fails on
+        // ONE page (page-specific) or on EVERY page (site-wide chrome). Without
+        // this, a 20-page scan reports the same footer issue 20 times.
+        violations,
+        // Keyboard/focus evidence is per-page too: focus order on checkout is a
+        // different thing from focus order on the front page.
+        keyboard,
       });
     }
 
@@ -178,8 +201,11 @@ export function createCrawler() {
           await page.waitForTimeout(500);
           const title = await page.title().catch(() => "");
           log(`Scanning: ${title || pageKey}`);
-          const violations = await scanPage(page);
-          recordScan(target.href, title, violations);
+          const violations = await scanPage(page, { elementScreenshots: opts.elementScreenshots });
+          const kb = opts.keyboardEvidence === false
+            ? null
+            : await captureKeyboardEvidence(page).catch(() => null);
+          recordScan(target.href, title, violations, kb);
         }
       } else {
         log(`Crawl started at ${origin} (max ${maxPages} pages).`);
@@ -192,8 +218,11 @@ export function createCrawler() {
             visited.add(pageKey);
             const title = await page.title().catch(() => "");
             log(`Scanning: ${title || pageKey}`);
-            const violations = await scanPage(page);
-            recordScan(page.url(), title, violations);
+            const violations = await scanPage(page, { elementScreenshots: opts.elementScreenshots });
+            const kb = opts.keyboardEvidence === false
+              ? null
+              : await captureKeyboardEvidence(page).catch(() => null);
+            recordScan(page.url(), title, violations, kb);
           }
 
           if (state.pagesScanned.length >= maxPages) break;
