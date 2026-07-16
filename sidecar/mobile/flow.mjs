@@ -14,6 +14,7 @@
 // Only ONE flow can be active at a time — same single-session model as the rest
 // of the sidecar.
 import { scanMobile } from "./scanner.mjs";
+import { estimateCost } from "../cost.mjs";
 
 let active = null;
 
@@ -39,6 +40,7 @@ export function flowStatus() {
     startedAt: active.startedAt,
     steps: active.steps.map(stepSummary),
     uniqueFindings: active.merged.size,
+    usage: active.usage,
   };
 }
 
@@ -66,6 +68,8 @@ export function startFlow({ platform, deviceId, name }) {
     merged: new Map(), // findingKey -> { finding, seenInSteps: [] }
     device: null,
     provider: null,
+    aiProviderModel: null, // { provider, model } — needed to price the accumulated tokens
+    usage: { inputTokens: 0, outputTokens: 0 },
     warnings: [],
   };
   return flowStatus();
@@ -111,6 +115,9 @@ export async function flowStep({ ai, aiReview = true, label } = {}) {
 
   active.device = result.device ?? active.device;
   active.provider = result.provider ?? active.provider;
+  if (ai?.provider) active.aiProviderModel = { provider: ai.provider, model: ai.model };
+  active.usage.inputTokens += result.usage?.inputTokens ?? 0;
+  active.usage.outputTokens += result.usage?.outputTokens ?? 0;
   for (const w of result.warnings ?? []) active.warnings.push({ ...w, step: index });
 
   active.steps.push({
@@ -124,6 +131,8 @@ export async function flowStep({ ai, aiReview = true, label } = {}) {
     treeWarning: result.treeWarning,
     newFindings,
     stats: result.stats,
+    usage: result.usage,   // per-step breakdown, for the AI usage report
+    cost: result.cost,
   });
 
   return { step: stepSummary(active.steps[active.steps.length - 1]), status: flowStatus() };
@@ -154,6 +163,18 @@ export function stopFlow() {
   const totalRaw = active.steps.reduce(
     (n, s) => n + s.counts.critical + s.counts.serious + s.counts.moderate + s.counts.minor, 0);
 
+  // Priced once at the end, across the SUM of every step's tokens — a flow is
+  // one AI "job" from a cost point of view even though it's N requests under
+  // the hood, same framing as a multi-page web crawl.
+  const cost = active.aiProviderModel
+    ? estimateCost({
+        provider: active.aiProviderModel.provider,
+        model: active.aiProviderModel.model,
+        inputTokens: active.usage.inputTokens,
+        outputTokens: active.usage.outputTokens,
+      })
+    : { usd: 0, inputTokens: 0, outputTokens: 0, note: "AI review was not run for this flow" };
+
   const result = {
     flow: true,
     name: active.name,
@@ -172,6 +193,8 @@ export function stopFlow() {
     treeAvailable: active.steps.some((s) => s.treeAvailable),
     treeWarning: active.steps.find((s) => s.treeWarning)?.treeWarning ?? null,
     provider: active.provider,
+    usage: active.usage,
+    cost,
     stats: {
       fromMeasured,
       fromAi,

@@ -25,10 +25,17 @@ export interface AiFix {
   measured?: boolean;          // deterministic keyboard/focus probe — not an AI opinion
   wcag?: string[];
 }
+export interface AiUsage { inputTokens: number; outputTokens: number }
+export interface AiCost {
+  usd: number | null; inputTokens: number; outputTokens: number;
+  note?: string; pricedAs?: string;
+}
 export interface AiReport {
   executiveSummary: string; businessImpact: string;
   fixes: AiFix[]; quickWins: string[];
   generatedAt: string; provider: string;
+  usage?: AiUsage;
+  cost?: AiCost;
   evidence?: {
     scenarios: number; imagesUsed: number; verified: number; unverified: number;
     keyboardMeasured?: number; focusIndicatorsMissing?: number; focusableTraced?: number;

@@ -91,8 +91,14 @@ if(D.expertAudit){
 }
 if(D.aiReport){
   const a=document.getElementById("ai");
+  const c=D.aiReport.cost, u=D.aiReport.usage;
+  const costLabel = (c && u && (u.inputTokens+u.outputTokens)>0)
+    ? (c.usd===null ? (u.inputTokens+u.outputTokens).toLocaleString()+' tokens'
+        : c.usd===0 ? 'local \u00b7 free'
+          : '$'+c.usd.toFixed(4)+' \u00b7 '+(u.inputTokens+u.outputTokens).toLocaleString()+' tokens')
+    : '';
   a.innerHTML='<details open style="margin-bottom:14px"><summary><strong>AI Report</strong>'+
-  '<span class="muted" style="margin-left:auto">'+esc(D.aiReport.provider)+'</span></summary>'+
+  '<span class="muted" style="margin-left:auto">'+esc(D.aiReport.provider)+(costLabel?' \u00b7 '+esc(costLabel):'')+'</span></summary>'+
   '<div class="body"><div class="muted">Executive summary</div><p>'+esc(D.aiReport.executiveSummary)+'</p>'+
   '<div class="muted">Business impact</div><p>'+esc(D.aiReport.businessImpact)+'</p>'+
   (D.aiReport.quickWins?.length?'<div class="muted">Quick wins</div><p>'+D.aiReport.quickWins.map(esc).join("<br>")+'</p>':"")+

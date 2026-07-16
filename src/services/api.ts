@@ -64,12 +64,18 @@ export const api = {
   fullScanStart: (
     maxPages: number,
     ai: { provider: string; model: string; apiKey: string; baseUrl?: string },
-    urlList?: string[]
+    urlList?: string[],
+    interaction?: { interact: boolean; allowMutations: boolean; valueProfile?: unknown }
   ) =>
     req(`${BASE}/scan/full/start`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ maxPages, ai, urlList }),
+      body: JSON.stringify({
+        maxPages, ai, urlList,
+        interact: interaction?.interact ?? false,
+        allowMutations: interaction?.allowMutations ?? false,
+        valueProfile: interaction?.valueProfile ?? null,
+      }),
     }),
 
   fullScanStatus: () => req(`${BASE}/scan/full/status`),
@@ -223,6 +229,12 @@ export const api = {
 
   mobileReportHtml: (result: unknown, filename?: string) =>
     req(`${BASE}/mobile/report/html`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ result, filename }),
+    }),
+
+  mobileAiUsageReportHtml: (result: unknown, filename?: string) =>
+    req(`${BASE}/mobile/report/ai-usage/html`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ result, filename }),
     }),

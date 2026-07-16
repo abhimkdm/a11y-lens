@@ -22,9 +22,10 @@
 //
 // Output is schema-constrained where the provider supports it, which also
 // prevents the malformed-JSON failures at the source instead of repairing them.
-import { aiChat, aiStructured } from "./ai.mjs";
+import { aiChat, aiChatWithUsage, aiStructured } from "./ai.mjs";
 import { parseAiJson } from "./json-repair.mjs";
 import { buildKeyboardEvidenceText } from "./keyboard-evidence.mjs";
+import { estimateCost } from "./cost.mjs";
 
 const SEV_ORDER = { critical: 0, serious: 1, moderate: 2, minor: 3 };
 
@@ -291,6 +292,9 @@ export async function generateAiReport(scan, ai) {
         quickWins: [],
         generatedAt: new Date().toISOString(),
         provider: `${ai.provider}/${ai.model}`,
+        // No AI call was made — nothing to price.
+        usage: { inputTokens: 0, outputTokens: 0 },
+        cost: { usd: 0, inputTokens: 0, outputTokens: 0, note: "no AI call was made — no violations to report on" },
         evidence: { scenarios: ev.scenarioCount, imagesUsed: 0, verified: 0, unverified: 0 },
       },
       warnings: [],
@@ -304,6 +308,7 @@ export async function generateAiReport(scan, ai) {
   let data;
   let recovered = false;
   let sawImages = ev.images.length;
+  let usage = { inputTokens: 0, outputTokens: 0 };
 
   try {
     // Schema-constrained + vision. Also the cure for the malformed-JSON failures:
@@ -316,6 +321,7 @@ export async function generateAiReport(scan, ai) {
       schema: REPORT_SCHEMA,
       maxTokens: 6000,
     });
+    usage = data.__usage ?? usage;
   } catch (e) {
     // Some gateways reject images or json_schema. Degrade to plain text with
     // tolerant parsing rather than losing the report entirely.
@@ -325,12 +331,13 @@ export async function generateAiReport(scan, ai) {
       message: `Structured/vision request failed (${String(e.message ?? e)}). Retried as plain text — the model did NOT see the screenshots, so fixes may be less specific.`,
       detail: null,
     });
-    const raw = await aiChat(
+    const { text: raw, usage: fallbackUsage } = await aiChatWithUsage(
       ai,
       prompt +
         "\n\nReply with ONLY valid JSON. No markdown fences, no preamble. Escape all quotes and newlines inside JSON strings. Never use backticks to quote a value.",
       5000
     );
+    usage = fallbackUsage;
     const parsed = parseAiJson(raw, { salvageKeys: ["fixes", "quickWins"] });
     data = parsed.data;
     warnings.push(...parsed.warnings);
@@ -411,6 +418,13 @@ export async function generateAiReport(scan, ai) {
     });
   }
 
+  const cost = estimateCost({
+    provider: ai.provider,
+    model: ai.model,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+  });
+
   const report = {
     executiveSummary:
       typeof data.executiveSummary === "string" && data.executiveSummary.trim()
@@ -424,6 +438,8 @@ export async function generateAiReport(scan, ai) {
     quickWins: Array.isArray(data.quickWins) ? data.quickWins.map(String) : [],
     generatedAt: new Date().toISOString(),
     provider: `${ai.provider}/${ai.model}`,
+    usage,
+    cost,
     evidence: {
       scenarios: ev.scenarioCount,
       imagesUsed: sawImages,

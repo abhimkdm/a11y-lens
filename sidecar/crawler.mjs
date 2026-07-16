@@ -16,6 +16,7 @@ import { createRequire } from "node:module";
 import { aiChat } from "./ai.mjs";
 import { captureElementScreenshots, installHighlighter } from "./element-shots.mjs";
 import { captureKeyboardEvidence } from "./keyboard-evidence.mjs";
+import { exploreInteractions } from "./interact.mjs";
 
 const require = createRequire(import.meta.url);
 const axeSource = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
@@ -171,6 +172,46 @@ export function createCrawler() {
       });
     }
 
+    // Run the interaction pass for the page currently loaded, recording each
+    // revealed state (open modal, expanded dropdown, validation error, etc.) as
+    // its own scenario via the SAME recordScan path — so interaction states flow
+    // into the site report, the AI report, and the AI cost report unchanged.
+    // deps inject the crawler's own axe run and keyboard capture so there's no
+    // second copy of that config to drift, and no circular import.
+    async function runInteractionPass(page, baseUrl, baseTitle) {
+      if (!opts.interact) return;
+      try {
+        const { scenarios, valueLog } = await exploreInteractions(
+          page,
+          {
+            allowMutations: !!opts.allowMutations,
+            valueProfile: opts.valueProfile ?? null,
+            maxInteractions: opts.maxInteractions ?? 12,
+            keyboardEvidence: opts.keyboardEvidence !== false,
+          },
+          {
+            scanPage: (p) => scanPage(p, { elementScreenshots: opts.elementScreenshots }),
+            captureKeyboard: (p) => captureKeyboardEvidence(p),
+            log,
+          }
+        );
+        for (const sc of scenarios) {
+          // Each interaction state is recorded under a synthetic URL so it reads
+          // as a distinct scenario in the report while still tracing back to the
+          // page it came from.
+          const label = `${baseTitle || baseUrl} — ${sc.label}`;
+          recordScan(`${baseUrl}#${encodeURIComponent(sc.label)}`, label, sc.violations, sc.keyboard);
+        }
+        if (valueLog && valueLog.length) {
+          state.interactionValueLog = (state.interactionValueLog ?? []).concat(
+            valueLog.map((v) => ({ ...v, page: baseUrl }))
+          );
+        }
+      } catch (e) {
+        log(`Interaction pass failed on ${baseUrl}: ${String(e).slice(0, 120)}`);
+      }
+    }
+
     try {
       if (urlList) {
         log(`Custom URL list scan started at ${origin} (${urlList.length} URL${urlList.length === 1 ? "" : "s"} provided).`);
@@ -206,6 +247,7 @@ export function createCrawler() {
             ? null
             : await captureKeyboardEvidence(page).catch(() => null);
           recordScan(target.href, title, violations, kb);
+          await runInteractionPass(page, target.href, title);
         }
       } else {
         log(`Crawl started at ${origin} (max ${maxPages} pages).`);
@@ -223,6 +265,7 @@ export function createCrawler() {
               ? null
               : await captureKeyboardEvidence(page).catch(() => null);
             recordScan(page.url(), title, violations, kb);
+            await runInteractionPass(page, page.url(), title);
           }
 
           if (state.pagesScanned.length >= maxPages) break;

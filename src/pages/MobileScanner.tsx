@@ -15,6 +15,7 @@ import RocketLaunchIcon from "@mui/icons-material/RocketLaunch";
 import RouteIcon from "@mui/icons-material/Route";
 import StopIcon from "@mui/icons-material/Stop";
 import DescriptionIcon from "@mui/icons-material/Description";
+import PaidOutlinedIcon from "@mui/icons-material/PaidOutlined";
 import SeverityChip from "../components/SeverityChip";
 import { api } from "../services/api";
 import { useAppStore } from "../store/useAppStore";
@@ -37,6 +38,11 @@ interface FlowStepSummary {
   index: number; label: string;
   app: { package: string } | null; timestamp: string;
   counts: Record<Severity, number>; newFindings: number;
+  usage?: { inputTokens: number; outputTokens: number };
+}
+interface MobileCost {
+  usd: number | null; inputTokens: number; outputTokens: number;
+  note?: string; pricedAs?: string;
 }
 interface MobileResult {
   platform: string; device: { model?: string; release?: string } | null;
@@ -46,6 +52,8 @@ interface MobileResult {
   counts: Record<Severity, number>;
   treeAvailable: boolean; treeWarning: string | null;
   provider: string | null;
+  usage?: { inputTokens: number; outputTokens: number };
+  cost?: MobileCost;
   flow?: boolean; name?: string; steps?: FlowStepSummary[];
   stats: {
     fromMeasured: number; fromAi: number; verified: number; unverified: number;
@@ -89,6 +97,7 @@ export default function MobileScanner() {
   // --- report export ---
   const [exporting, setExporting] = useState(false);
   const [exportedPath, setExportedPath] = useState("");
+  const [exportingCost, setExportingCost] = useState(false);
 
   const refresh = useCallback(() => {
     api.mobileToolchain().then((r) => r.ok && setTool(r)).catch(() => {});
@@ -207,6 +216,15 @@ export default function MobileScanner() {
     setExporting(false);
     if (r.ok) setExportedPath(r.path ?? "");
     else setError(r.error ?? "Report export failed");
+  };
+
+  const exportCostReport = async () => {
+    if (!result) return;
+    setExportingCost(true); setExportedPath("");
+    const r = await api.mobileAiUsageReportHtml(result).catch((e) => ({ ok: false, error: String(e) }));
+    setExportingCost(false);
+    if (r.ok) setExportedPath(r.path ?? "");
+    else setError(r.error ?? "AI cost report export failed");
   };
 
   return (
@@ -406,10 +424,27 @@ export default function MobileScanner() {
             )}
             {result.app && <Chip size="small" variant="outlined" label={result.app.package} />}
             {result.provider && <Chip size="small" variant="outlined" label={result.provider} />}
+            {result.cost && (result.usage?.inputTokens ?? 0) > 0 && (
+              <Tooltip title={`${(result.usage?.inputTokens ?? 0).toLocaleString()} in / ${(result.usage?.outputTokens ?? 0).toLocaleString()} out tokens${result.cost.pricedAs ? ` · priced as ${result.cost.pricedAs}` : ""}`}>
+                <Chip size="small" color={result.cost.usd === null ? "warning" : "success"} variant="outlined"
+                      label={
+                        result.cost.usd === null ? `${((result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0)).toLocaleString()} tokens`
+                          : result.cost.usd === 0 ? "local · free"
+                            : `$${result.cost.usd.toFixed(4)}`
+                      } />
+              </Tooltip>
+            )}
             <Box sx={{ flex: 1 }} />
             <Button size="small" startIcon={<DescriptionIcon />} onClick={exportReport} disabled={exporting}>
               {exporting ? "Writing…" : "Export HTML report"}
             </Button>
+            {result.provider && (result.usage?.inputTokens ?? 0) > 0 && (
+              <Tooltip title="Management-facing report: model used, token consumption, and estimated AI cost for this scan.">
+                <Button size="small" startIcon={<PaidOutlinedIcon />} onClick={exportCostReport} disabled={exportingCost}>
+                  {exportingCost ? "Writing…" : "AI cost report"}
+                </Button>
+              </Tooltip>
+            )}
           </Stack>
 
           {exportedPath && (

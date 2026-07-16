@@ -12,6 +12,7 @@
 // and a finding phrased in their terms would be nonsense.
 import { aiStructured, aiChat } from "../ai.mjs";
 import { parseAiJson } from "../json-repair.mjs";
+import { estimateCost } from "../cost.mjs";
 import {
   androidHierarchy, androidScreenshot, androidDeviceInfo, androidForegroundApp,
   iosHierarchy, iosScreenshot, iosDeviceInfo, ToolMissingError,
@@ -151,6 +152,7 @@ export async function scanMobile({ platform, deviceId, ai, aiReview = true }) {
   let aiFindings = [];
   let passes = [];
   const warnings = [];
+  let usage = { inputTokens: 0, outputTokens: 0 };
 
   if (aiReview && ai?.provider) {
     const treeText = treeAvailable
@@ -168,6 +170,7 @@ export async function scanMobile({ platform, deviceId, ai, aiReview = true }) {
         schema: MOBILE_SCHEMA,
         maxTokens: 6000,
       });
+      usage = raw.__usage ?? usage;
 
       aiFindings = (raw.findings ?? [])
         .filter((f) => f && f.title)
@@ -210,6 +213,13 @@ export async function scanMobile({ platform, deviceId, ai, aiReview = true }) {
     });
   }
 
+  // No AI call happened either because aiReview was off or no provider was
+  // configured — nothing to price, and estimateCost(0,0) against an unknown
+  // model would print a confusing "no local price" note for a $0 request.
+  const cost = (aiReview && ai?.provider)
+    ? estimateCost({ provider: ai.provider, model: ai.model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens })
+    : { usd: 0, inputTokens: 0, outputTokens: 0, note: "AI review was not run" };
+
   return {
     platform,
     deviceId,
@@ -224,6 +234,8 @@ export async function scanMobile({ platform, deviceId, ai, aiReview = true }) {
     treeAvailable,
     treeWarning,
     provider: ai?.provider ? `${ai.provider}/${ai.model}` : null,
+    usage,
+    cost,
     stats: {
       ...measured.stats,
       fromMeasured: measured.findings.length,

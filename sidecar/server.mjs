@@ -42,6 +42,7 @@ import {
 import { scanMobile } from "./mobile/scanner.mjs";
 import { startFlow, flowStep, stopFlow, cancelFlow, flowStatus } from "./mobile/flow.mjs";
 import { renderMobileReportHtml } from "./mobile/report-html.mjs";
+import { renderMobileAiUsageReportHtml } from "./mobile/report-ai-usage-html.mjs";
 import { sessions, settings, audit, logs, crawls } from "./db.mjs";
 import { encrypt, decrypt, maskScan, assertProviderAllowed } from "./security.mjs";
 import { compareScans } from "./compare.mjs";
@@ -315,9 +316,29 @@ app.post("/scan/full/start", (req, res) => {
   let ai;
   try { ai = resolveAi(req.body?.ai); } catch (e) { return res.status(403).json({ ok: false, error: String(e.message ?? e) }); }
   const urlList = Array.isArray(req.body?.urlList) ? req.body.urlList : undefined;
-  audit.log("scan.full.start", urlList ? `custom URL list (${urlList.length})` : page.url());
-  crawler.start(page, { maxPages: req.body?.maxPages, ai, urlList });
-  res.json({ ok: true });
+
+  // Interaction scanning. The Operate gear (form-fill + real submit) is gated
+  // ENTIRELY on this per-run flag — there is no stored default, so it cannot be
+  // left on by accident: every mutating run is a fresh, explicit decision. We
+  // also record which URL the run actually operated against, so a mutating run
+  // pointed at the wrong host is visible after the fact.
+  const interact = !!req.body?.interact;
+  const allowMutations = interact && req.body?.allowMutations === true;
+  const valueProfile = req.body?.valueProfile ?? null;
+
+  audit.log(
+    "scan.full.start",
+    `${urlList ? `custom URL list (${urlList.length})` : page.url()}` +
+    `${interact ? ` · interaction:${allowMutations ? "OPERATE(mutations allowed)" : "explore"}` : ""}` +
+    `${allowMutations ? ` · operating-against:${page.url()}` : ""}`
+  );
+
+  crawler.start(page, {
+    maxPages: req.body?.maxPages, ai, urlList,
+    interact, allowMutations, valueProfile,
+    maxInteractions: req.body?.maxInteractions,
+  });
+  res.json({ ok: true, interaction: interact ? (allowMutations ? "operate" : "explore") : "off" });
 });
 
 app.get("/scan/full/status", (_req, res) => {
@@ -856,6 +877,31 @@ app.post("/mobile/report/html", (req, res) => {
     const path = join(EXPORT_DIR, base);
     writeFileSync(path, html, "utf8");
     audit.log("mobile.report", base);
+    res.json({ ok: true, path, dir: EXPORT_DIR });
+  } catch (e) {
+    logs.add({ level: "error", source: "mobile", message: String(e.message ?? e), detail: e.stack });
+    res.status(500).json({ ok: false, error: String(e.message ?? e) });
+  }
+});
+
+// AI usage & cost report — a separate management-facing document (model,
+// context/token consumption, estimated spend). Works for a single scan or a
+// finished flow. Only meaningful when an AI review ran, but it renders a clear
+// "not run" state rather than erroring so the UI can always offer the button.
+app.post("/mobile/report/ai-usage/html", (req, res) => {
+  const { result, filename } = req.body ?? {};
+  if (!result || typeof result !== "object") {
+    return res.status(400).json({ ok: false, error: "A mobile scan result is required." });
+  }
+  try {
+    const html = renderMobileAiUsageReportHtml(result);
+    const base = (filename || `a11y-mobile-ai-usage-${result.flow ? "flow" : "scan"}-${
+      new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.html`)
+      .replace(/[/\\]/g, "_").replace(/\.\./g, "_");
+    mkdirSync(EXPORT_DIR, { recursive: true });
+    const path = join(EXPORT_DIR, base);
+    writeFileSync(path, html, "utf8");
+    audit.log("mobile.report.ai-usage", base);
     res.json({ ok: true, path, dir: EXPORT_DIR });
   } catch (e) {
     logs.add({ level: "error", source: "mobile", message: String(e.message ?? e), detail: e.stack });

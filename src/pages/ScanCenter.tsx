@@ -96,6 +96,14 @@ export default function ScanCenter() {
   const [urlListSource, setUrlListSource] = useState(""); // filename, "Recorded path", or "Crawl Explorer"
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Interaction scanning. `allowMutations` is deliberately NOT persisted and is
+  // reset to false after every scan — a mutating run must be a fresh, explicit
+  // decision each time, never a setting left on by accident.
+  const [interact, setInteract] = useState(false);
+  const [allowMutations, setAllowMutations] = useState(false);
+  const [valueProfileText, setValueProfileText] = useState("");
+  const [valueProfileError, setValueProfileError] = useState("");
+
   const [recording, setRecording] = useState(false);
   const [recordedCount, setRecordedCount] = useState(0);
   const recordPollRef = useRef<number | null>(null);
@@ -189,10 +197,19 @@ export default function ScanCenter() {
       setError("Upload a valid URL list JSON file first, or turn off \"Use custom URL list\".");
       return;
     }
+    let valueProfile: unknown = null;
+    if (interact && allowMutations && valueProfileText.trim()) {
+      try { valueProfile = JSON.parse(valueProfileText); setValueProfileError(""); }
+      catch { setValueProfileError("Value profile is not valid JSON."); setError("Fix the value profile JSON, or clear it."); return; }
+    }
     setError(""); setCrawl(null);
-    const r = await api.fullScanStart(maxPages, aiProvider, useUrlList ? urlList : undefined)
-      .catch((e) => ({ ok: false, error: String(e) }));
+    const r = await api.fullScanStart(
+      maxPages, aiProvider, useUrlList ? urlList : undefined,
+      interact ? { interact: true, allowMutations, valueProfile } : undefined
+    ).catch((e) => ({ ok: false, error: String(e) }));
     if (!r.ok) { setError(r.error ?? "Could not start full scan"); return; }
+    // Non-sticky: a mutating run can't be left armed for the next scan.
+    setAllowMutations(false);
     setScanning("full");
     pollRef.current = window.setInterval(async () => {
       const st = await api.fullScanStatus().catch(() => null);
@@ -347,9 +364,51 @@ export default function ScanCenter() {
                      onChange={(e) => setMaxPages(Math.max(1, Math.min(40, +e.target.value || 10)))}
                      sx={{ width: 120 }} />
           <Typography variant="body2" color="text.secondary">
-            The AI explores navigation only — it never clicks delete, submit, payment, approve, or logout.
+            {interact
+              ? (allowMutations
+                  ? "Operate mode: the AI fills forms with your profile values and submits them. Staging only."
+                  : "Explore mode: the AI opens menus, modals, dropdowns and triggers validation to scan hidden states — but never types real data or submits.")
+              : "The AI explores navigation only — it never clicks delete, submit, payment, approve, or logout."}
           </Typography>
         </Stack>
+
+        <FormControlLabel
+          sx={{ mt: 1 }}
+          control={<Checkbox checked={interact}
+            onChange={(e) => { setInteract(e.target.checked); if (!e.target.checked) setAllowMutations(false); }} />}
+          label="Interact with each page — open menus, modals, dropdowns and trigger validation to scan states that only appear after interaction"
+        />
+        {interact && (
+          <Box sx={{ ml: 3.5, mb: 1, pl: 1.5, borderLeft: "2px solid rgba(154,167,180,0.25)" }}>
+            <FormControlLabel
+              control={<Checkbox color="warning" checked={allowMutations}
+                onChange={(e) => setAllowMutations(e.target.checked)} />}
+              label={
+                <Typography variant="body2">
+                  This is a <strong>staging / test</strong> environment — allow the AI to fill forms and submit them (mutations)
+                </Typography>
+              }
+            />
+            {allowMutations && (
+              <Alert severity="warning" sx={{ mt: 0.5, mb: 1 }}>
+                The AI will type values and click submit on this session's site (<code>{sessionOpen ? "open session" : "no session"}</code>).
+                Only use this against staging with disposable data. This resets after the scan — you'll re-confirm each time.
+              </Alert>
+            )}
+            {allowMutations && (
+              <TextField
+                fullWidth multiline minRows={3} size="small"
+                label="Value profile (optional JSON)"
+                placeholder={'{\n  "profile": { "search": "wireless headphones" },\n  "fields": { "#email": "test@staging.example.com", "input[name=zip]": "94103" }\n}'}
+                value={valueProfileText}
+                onChange={(e) => { setValueProfileText(e.target.value); setValueProfileError(""); }}
+                error={!!valueProfileError}
+                helperText={valueProfileError || "Fields you specify use your values; everything else gets a safe synthetic value (test@…, 1, Lorem) — logged in the report. Sensitive fields (card, CVV, OTP) are never filled."}
+                sx={{ mt: 0.5, fontFamily: "monospace" }}
+              />
+            )}
+          </Box>
+        )}
 
         <FormControlLabel
           sx={{ mt: 1 }}

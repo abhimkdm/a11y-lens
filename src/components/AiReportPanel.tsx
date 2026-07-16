@@ -29,6 +29,16 @@ export default function AiReportPanel({ report }: { report: AiReport }) {
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
         <Typography variant="h6">AI Report</Typography>
         <Chip size="small" variant="outlined" label={report.provider} />
+        {report.cost && (report.usage?.inputTokens ?? 0) > 0 && (
+          <Tooltip title={`${(report.usage?.inputTokens ?? 0).toLocaleString()} in / ${(report.usage?.outputTokens ?? 0).toLocaleString()} out tokens${report.cost.pricedAs ? ` · priced as ${report.cost.pricedAs}` : ""}. Export the AI cost report for a management-facing summary.`}>
+            <Chip size="small" variant="outlined" color={report.cost.usd === null ? "warning" : "success"}
+                  label={
+                    report.cost.usd === null ? `${((report.usage?.inputTokens ?? 0) + (report.usage?.outputTokens ?? 0)).toLocaleString()} tokens`
+                      : report.cost.usd === 0 ? "local · free"
+                        : `$${report.cost.usd.toFixed(4)}`
+                  } />
+          </Tooltip>
+        )}
         {report.evidence && (
           <Tooltip title={`The model was shown ${report.evidence.imagesUsed} screenshot(s) and the real DOM of every failing element, across ${report.evidence.scenarios} scenario(s).`}>
             <Chip size="small" variant="outlined"

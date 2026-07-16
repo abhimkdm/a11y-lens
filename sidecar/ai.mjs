@@ -22,7 +22,10 @@ async function callProvider(ai, prompt, maxTokens) {
       body: JSON.stringify({ model: ai.model, stream: false, messages: [{ role: "user", content: prompt }] }),
     }).then(x => x.json());
     if (r.error) throw new Error(r.error);
-    return r.message?.content ?? "";
+    return {
+      content: r.message?.content ?? "",
+      usage: { inputTokens: r.prompt_eval_count ?? 0, outputTokens: r.eval_count ?? 0 },
+    };
   }
 
   if (ai.provider === "claude") {
@@ -33,7 +36,10 @@ async function callProvider(ai, prompt, maxTokens) {
       body: JSON.stringify({ model: ai.model, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
     }).then(x => x.json());
     if (r.error) throw new Error(r.error.message ?? JSON.stringify(r.error));
-    return r.content?.map(c => c.text ?? "").join("") ?? "";
+    return {
+      content: r.content?.map(c => c.text ?? "").join("") ?? "",
+      usage: { inputTokens: r.usage?.input_tokens ?? 0, outputTokens: r.usage?.output_tokens ?? 0 },
+    };
   }
 
   if (ai.provider === "gemini") {
@@ -44,7 +50,13 @@ async function callProvider(ai, prompt, maxTokens) {
         body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) }
     ).then(x => x.json());
     if (r.error) throw new Error(r.error.message ?? JSON.stringify(r.error));
-    return r.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    return {
+      content: r.candidates?.[0]?.content?.parts?.[0]?.text ?? "",
+      usage: {
+        inputTokens: r.usageMetadata?.promptTokenCount ?? 0,
+        outputTokens: r.usageMetadata?.candidatesTokenCount ?? 0,
+      },
+    };
   }
 
   // openai-compatible (OpenAI, Kimi, Azure-compatible gateways, LM Studio, etc.)
@@ -58,30 +70,52 @@ async function callProvider(ai, prompt, maxTokens) {
     body: JSON.stringify({ model, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
   }).then(x => x.json());
   if (r.error) throw new Error(r.error.message ?? JSON.stringify(r.error));
-  return r.choices?.[0]?.message?.content ?? "";
+  return {
+    content: r.choices?.[0]?.message?.content ?? "",
+    usage: { inputTokens: r.usage?.prompt_tokens ?? 0, outputTokens: r.usage?.completion_tokens ?? 0 },
+  };
+}
+
+// Same call, same error handling, but also hands back token usage — needed by
+// any caller that has to price the request (the AI Report's plain-text fallback
+// path, in particular). aiChat() below is unchanged for its four existing
+// callers, which only ever wanted the string.
+export async function aiChatWithUsage(ai, prompt, maxTokens = 2000) {
+  if (!ai?.provider) throw new Error("No AI provider configured. Set one in Settings.");
+  try {
+    const { content, usage } = await callProvider(ai, prompt, maxTokens);
+    return { text: content, usage };
+  } catch (e) {
+    throw translateProviderError(e, ai);
+  }
+}
+
+function translateProviderError(e, ai) {
+  // Node's fetch throws a bare "fetch failed" for connection-level
+  // problems (server down, DNS failure, etc). Translate per provider.
+  const raw = String(e?.message ?? e);
+  if (/fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN/i.test(raw)) {
+    if (ai.provider === "ollama") {
+      return new Error(
+        `Can't reach Ollama at localhost:11434. Make sure Ollama is installed and running ` +
+        `(https://ollama.com), and that you've pulled the model "${ai.model}" — e.g. run: ollama pull ${ai.model}`
+      );
+    }
+    return new Error(
+      `Can't reach ${ai.provider} (${raw}). Check your internet connection` +
+      (ai.baseUrl ? ` and that ${ai.baseUrl} is reachable.` : ".")
+    );
+  }
+  return e;
 }
 
 export async function aiChat(ai, prompt, maxTokens = 2000) {
   if (!ai?.provider) throw new Error("No AI provider configured. Set one in Settings.");
   try {
-    return await callProvider(ai, prompt, maxTokens);
+    const { content } = await callProvider(ai, prompt, maxTokens);
+    return content;
   } catch (e) {
-    // Node's fetch throws a bare "fetch failed" for connection-level
-    // problems (server down, DNS failure, etc). Translate per provider.
-    const raw = String(e?.message ?? e);
-    if (/fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN/i.test(raw)) {
-      if (ai.provider === "ollama") {
-        throw new Error(
-          `Can't reach Ollama at localhost:11434. Make sure Ollama is installed and running ` +
-          `(https://ollama.com), and that you've pulled the model "${ai.model}" — e.g. run: ollama pull ${ai.model}`
-        );
-      }
-      throw new Error(
-        `Can't reach ${ai.provider} (${raw}). Check your internet connection` +
-        (ai.baseUrl ? ` and that ${ai.baseUrl} is reachable.` : ".")
-      );
-    }
-    throw e;
+    throw translateProviderError(e, ai);
   }
 }
 

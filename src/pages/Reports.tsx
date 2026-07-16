@@ -4,12 +4,14 @@ import {
 } from "@mui/material";
 import DownloadIcon from "@mui/icons-material/Download";
 import DataObjectIcon from "@mui/icons-material/DataObject";
+import PaidOutlinedIcon from "@mui/icons-material/PaidOutlined";
 import UploadIcon from "@mui/icons-material/Upload";
 import DeleteIcon from "@mui/icons-material/DeleteOutline";
 import CompareArrowsIcon from "@mui/icons-material/CompareArrows";
 import SeverityChip from "../components/SeverityChip";
 import { api } from "../services/api";
 import { buildHtmlReport } from "../utils/reportHtml";
+import { buildAiUsageReport } from "../utils/aiUsageReportHtml";
 import { useAppStore } from "../store/useAppStore";
 import type { Severity } from "../store/useAppStore";
 
@@ -126,19 +128,25 @@ export default function Reports() {
     else setError(r.error ?? "Comparison failed");
   };
 
-  const exportSession = async (row: SessionRow, kind: "html" | "session") => {
+  const exportSession = async (row: SessionRow, kind: "html" | "session" | "ai-usage") => {
     setError(""); setSaved("");
     const r = await api.getSession(row.id).catch(() => null);
     if (!r?.ok) { setError("Could not load session. Is the sidecar running?"); return; }
+    if (kind === "ai-usage" && !r.scan.aiReport) {
+      setError("This session has no AI report, so there's no AI usage or cost to export. Open the scan and generate an AI report first.");
+      return;
+    }
     const base = `a11y-lens_${row.timestamp.slice(0, 19).replace(/[:T]/g, "-")}`;
     const path =
       kind === "html"
         ? await save(`${base}.html`, buildHtmlReport(r.scan), "text/html")
-        : await save(
-            `${base}.a11ysession.json`,
-            JSON.stringify({ format: "a11y-lens-session", version: 1, scan: r.scan }, null, 2),
-            "application/json"
-          );
+        : kind === "ai-usage"
+          ? await save(`${base}_ai-cost.html`, buildAiUsageReport(r.scan), "text/html")
+          : await save(
+              `${base}.a11ysession.json`,
+              JSON.stringify({ format: "a11y-lens-session", version: 1, scan: r.scan }, null, 2),
+              "application/json"
+            );
     if (path) setSaved(path);
   };
 
@@ -226,6 +234,10 @@ export default function Reports() {
                       onClick={() => exportSession(row, "html")}>HTML</Button>
               <Button size="small" variant="outlined" startIcon={<DataObjectIcon />}
                       onClick={() => exportSession(row, "session")}>Session</Button>
+              <Tooltip title="Management-facing report: model used, token consumption, and estimated AI cost. Requires an AI report on this session.">
+                <Button size="small" variant="outlined" startIcon={<PaidOutlinedIcon />}
+                        onClick={() => exportSession(row, "ai-usage")}>AI cost</Button>
+              </Tooltip>
               {row.kind === "full" && (
                 <Tooltip title="Multi-page report: shared chrome issues collapsed into one site-wide section, stable finding IDs, and an AI executive summary.">
                   <span>
