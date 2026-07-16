@@ -325,10 +325,18 @@ app.post("/scan/full/start", (req, res) => {
   const interact = !!req.body?.interact;
   const allowMutations = interact && req.body?.allowMutations === true;
   const valueProfile = req.body?.valueProfile ?? null;
+  // AI Full Scan: run the per-page manual-reviewer AI audit alongside axe.
+  // Needs a working provider (the audit is the whole point), so fail clearly if
+  // one wasn't resolved rather than silently running a plain Full Scan.
+  const aiAudit = req.body?.aiAudit === true;
+  if (aiAudit && !ai?.provider) {
+    return res.status(403).json({ ok: false, error: "AI Full Scan needs an AI provider. Configure one in Settings first." });
+  }
 
   audit.log(
     "scan.full.start",
     `${urlList ? `custom URL list (${urlList.length})` : page.url()}` +
+    `${aiAudit ? " · AI-audit" : ""}` +
     `${interact ? ` · interaction:${allowMutations ? "OPERATE(mutations allowed)" : "explore"}` : ""}` +
     `${allowMutations ? ` · operating-against:${page.url()}` : ""}`
   );
@@ -337,8 +345,9 @@ app.post("/scan/full/start", (req, res) => {
     maxPages: req.body?.maxPages, ai, urlList,
     interact, allowMutations, valueProfile,
     maxInteractions: req.body?.maxInteractions,
+    aiAudit,
   });
-  res.json({ ok: true, interaction: interact ? (allowMutations ? "operate" : "explore") : "off" });
+  res.json({ ok: true, interaction: interact ? (allowMutations ? "operate" : "explore") : "off", aiAudit });
 });
 
 app.get("/scan/full/status", (_req, res) => {

@@ -298,10 +298,13 @@ export async function aiStructured(ai, { system, user, images = [], schema, maxT
 
 // Ask for JSON, strip fences, parse defensively.
 export async function aiJson(ai, prompt, maxTokens = 2500) {
-  const raw = await aiChat(ai, prompt + "\n\nReply with ONLY valid JSON. No markdown fences, no preamble.", maxTokens);
+  const { text: raw, usage } = await aiChatWithUsage(ai, prompt + "\n\nReply with ONLY valid JSON. No markdown fences, no preamble.", maxTokens);
   const clean = raw.replace(/```json|```/g, "").trim();
   const start = clean.indexOf("{");
   const end = clean.lastIndexOf("}");
   if (start === -1 || end === -1) throw new Error("AI did not return JSON.");
-  return JSON.parse(clean.slice(start, end + 1));
+  const parsed = JSON.parse(clean.slice(start, end + 1));
+  // Non-enumerable so it never pollutes the parsed JSON shape, matching aiStructured.
+  Object.defineProperty(parsed, "__usage", { value: usage, enumerable: false });
+  return parsed;
 }

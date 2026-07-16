@@ -65,7 +65,8 @@ export const api = {
     maxPages: number,
     ai: { provider: string; model: string; apiKey: string; baseUrl?: string },
     urlList?: string[],
-    interaction?: { interact: boolean; allowMutations: boolean; valueProfile?: unknown }
+    interaction?: { interact: boolean; allowMutations: boolean; valueProfile?: unknown },
+    aiAudit?: boolean
   ) =>
     req(`${BASE}/scan/full/start`, {
       method: "POST",
@@ -75,6 +76,7 @@ export const api = {
         interact: interaction?.interact ?? false,
         allowMutations: interaction?.allowMutations ?? false,
         valueProfile: interaction?.valueProfile ?? null,
+        aiAudit: aiAudit ?? false,
       }),
     }),
 

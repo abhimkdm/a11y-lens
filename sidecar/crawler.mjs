@@ -17,6 +17,9 @@ import { aiChat } from "./ai.mjs";
 import { captureElementScreenshots, installHighlighter } from "./element-shots.mjs";
 import { captureKeyboardEvidence } from "./keyboard-evidence.mjs";
 import { exploreInteractions } from "./interact.mjs";
+import { auditPageAi } from "./ai-audit.mjs";
+import { dedupeFindings } from "./ai-dedupe.mjs";
+import { estimateCost } from "./cost.mjs";
 
 const require = createRequire(import.meta.url);
 const axeSource = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
@@ -32,6 +35,9 @@ export function createCrawler() {
     log: [],
     error: null,
     result: null,       // aggregate ScanResult when done
+    aiUsage: { inputTokens: 0, outputTokens: 0 },  // AI Full Scan token total
+    aiProviderModel: null,
+    aiAuditPages: 0,
   };
 
   function log(msg) {
@@ -212,6 +218,35 @@ export function createCrawler() {
       }
     }
 
+    // AI Full Scan: after a page's axe scan, run the manual-reviewer AI audit and
+    // merge its findings into the SAME page record (so the site report, AI report,
+    // and cost report all include them). axe's rule ids for the page are passed as
+    // a suppression list so the AI focuses only on what scanners miss. Returns the
+    // AI findings so the caller records them under the page.
+    async function runAiAudit(page, baseUrl, axeViolations, keyboard) {
+      if (!opts.aiAudit || !ai?.provider) return [];
+      try {
+        state.aiProviderModel = { provider: ai.provider, model: ai.model };
+        const suppress = (axeViolations ?? []).map((v) => v.id);
+        log(`AI audit: ${baseUrl} …`);
+        const r = await auditPageAi(page, ai, {
+          url: baseUrl,
+          chromeOnly: false,
+          suppressRuleIds: suppress,
+          keyboard,          // feed the Tab trace + focus-visible probe into the audit
+        });
+        state.aiUsage.inputTokens += r.usage?.inputTokens ?? 0;
+        state.aiUsage.outputTokens += r.usage?.outputTokens ?? 0;
+        state.aiAuditPages++;
+        for (const w of r.warnings ?? []) log(w);
+        log(`AI audit: ${baseUrl} — ${r.findings.length} finding(s), ${r.passes.length} pass(es)`);
+        return r.findings;
+      } catch (e) {
+        log(`AI audit failed on ${baseUrl}: ${String(e).slice(0, 120)}`);
+        return [];
+      }
+    }
+
     try {
       if (urlList) {
         log(`Custom URL list scan started at ${origin} (${urlList.length} URL${urlList.length === 1 ? "" : "s"} provided).`);
@@ -246,7 +281,8 @@ export function createCrawler() {
           const kb = opts.keyboardEvidence === false
             ? null
             : await captureKeyboardEvidence(page).catch(() => null);
-          recordScan(target.href, title, violations, kb);
+          const aiFindings = await runAiAudit(page, target.href, violations, kb);
+          recordScan(target.href, title, [...violations, ...aiFindings], kb);
           await runInteractionPass(page, target.href, title);
         }
       } else {
@@ -264,7 +300,8 @@ export function createCrawler() {
             const kb = opts.keyboardEvidence === false
               ? null
               : await captureKeyboardEvidence(page).catch(() => null);
-            recordScan(page.url(), title, violations, kb);
+            const aiFindings = await runAiAudit(page, page.url(), violations, kb);
+            recordScan(page.url(), title, [...violations, ...aiFindings], kb);
             await runInteractionPass(page, page.url(), title);
           }
 
@@ -306,6 +343,48 @@ export function createCrawler() {
         timestamp: new Date().toISOString(), score: avg, counts, violations,
         pages: state.pagesScanned,
       };
+      // When AI Full Scan ran, attach the token usage + priced cost across every
+      // page it audited, so the AI cost report can bill the whole crawl as one job.
+      if (opts.aiAudit && state.aiProviderModel) {
+        // Semantic dedupe: the same header/nav issue reported on 20 pages becomes
+        // ONE group, so the report is readable. Collect every ai-audit finding
+        // across pages first.
+        const aiFindings = [];
+        for (const v of merged.values()) {
+          if (v.source === "ai-audit") aiFindings.push(v);
+        }
+        let aiGroups = null, dedupeUsage = { inputTokens: 0, outputTokens: 0 };
+        if (aiFindings.length) {
+          try {
+            log(`AI audit: deduplicating ${aiFindings.length} findings across pages …`);
+            const d = await dedupeFindings(aiFindings, ai);
+            aiGroups = d.groups;
+            dedupeUsage = d.usage;
+            state.aiUsage.inputTokens += dedupeUsage.inputTokens;
+            state.aiUsage.outputTokens += dedupeUsage.outputTokens;
+            log(`AI audit: ${aiFindings.length} findings → ${aiGroups.length} unique after dedupe.`);
+          } catch (e) {
+            log(`AI dedupe failed: ${String(e).slice(0, 100)}`);
+          }
+        }
+
+        const cost = estimateCost({
+          provider: state.aiProviderModel.provider,
+          model: state.aiProviderModel.model,
+          inputTokens: state.aiUsage.inputTokens,
+          outputTokens: state.aiUsage.outputTokens,
+        });
+        state.result.aiAudit = {
+          pagesAudited: state.aiAuditPages,
+          provider: `${state.aiProviderModel.provider}/${state.aiProviderModel.model}`,
+          findingsRaw: aiFindings.length,
+          groups: aiGroups,
+          groupCount: aiGroups ? aiGroups.length : null,
+        };
+        state.result.usage = state.aiUsage;
+        state.result.cost = cost;
+        log(`AI audit: ${state.aiAuditPages} pages, ${state.aiUsage.inputTokens + state.aiUsage.outputTokens} tokens, ${cost.usd === null ? "unpriced" : "$" + (cost.usd ?? 0).toFixed(4)}.`);
+      }
       log(`Done. ${state.pagesScanned.length} pages, ${violations.length} failing rules, average score ${avg}.`);
     } catch (e) {
       state.error = String(e);

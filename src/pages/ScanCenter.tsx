@@ -5,6 +5,7 @@ import {
 } from "@mui/material";
 import BoltIcon from "@mui/icons-material/Bolt";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
+import AutoFixHighIcon from "@mui/icons-material/AutoFixHigh";
 import KeyboardIcon from "@mui/icons-material/Keyboard";
 import OpenInBrowserIcon from "@mui/icons-material/OpenInBrowser";
 import LayersIcon from "@mui/icons-material/Layers";
@@ -27,6 +28,10 @@ import ScoreRing from "../components/ScoreRing";
 // bring back the scope selector, the Cross-check checkbox and the audit button.
 // Everything behind it (sidecar endpoints, panel, persistence) is left intact.
 const SHOW_EXPERT_AUDIT = false;
+
+// Keyboard Audit is built but hidden from the scan toolbar for now. Flip to `true`
+// to bring back the button (and keyboard findings panel below scan results).
+const SHOW_KEYBOARD_AUDIT = false;
 
 export default function ScanCenter() {
   const [error, setError] = useState("");
@@ -192,9 +197,13 @@ export default function ScanCenter() {
     if (recordPollRef.current) clearInterval(recordPollRef.current);
   }, []);
 
-  const fullScan = async () => {
+  const fullScan = async (aiAudit = false) => {
     if (useUrlList && (!urlList.length || urlListError)) {
       setError("Upload a valid URL list JSON file first, or turn off \"Use custom URL list\".");
+      return;
+    }
+    if (aiAudit && (!aiProvider?.provider || !aiProvider?.model)) {
+      setError("AI Full Scan needs an AI provider. Configure one in Settings first.");
       return;
     }
     let valueProfile: unknown = null;
@@ -205,7 +214,8 @@ export default function ScanCenter() {
     setError(""); setCrawl(null);
     const r = await api.fullScanStart(
       maxPages, aiProvider, useUrlList ? urlList : undefined,
-      interact ? { interact: true, allowMutations, valueProfile } : undefined
+      interact ? { interact: true, allowMutations, valueProfile } : undefined,
+      aiAudit
     ).catch((e) => ({ ok: false, error: String(e) }));
     if (!r.ok) { setError(r.error ?? "Could not start full scan"); return; }
     // Non-sticky: a mutating run can't be left armed for the next scan.
@@ -332,31 +342,47 @@ export default function ScanCenter() {
       <Paper sx={{ p: 3 }}>
         <Typography variant="overline">3 · Run a scan</Typography>
         <Grid container spacing={1.5} sx={{ mt: 0.5 }}>
-          <Grid size={{ xs: 12, sm: 4 }}>
-            <Button fullWidth variant="contained" size="large" startIcon={<BoltIcon />}
+          <Grid size={{ xs: 12, sm: SHOW_KEYBOARD_AUDIT ? 3 : 4 }}>
+            <Button fullWidth variant="contained" size="medium" startIcon={<BoltIcon />}
                     disabled={!sessionOpen || scanning !== "idle"} onClick={quick}>
               Quick Accessibility Scan
             </Button>
           </Grid>
-          <Grid size={{ xs: 12, sm: 4 }}>
-            <Button fullWidth variant="outlined" size="large" startIcon={<KeyboardIcon />}
-                    disabled={!sessionOpen || scanning !== "idle"} onClick={keyboard}>
-              Keyboard Audit
-            </Button>
-          </Grid>
-          <Grid size={{ xs: 12, sm: 4 }}>
-            {scanning === "full" ? (
-              <Button fullWidth color="error" variant="outlined" size="large"
+          {SHOW_KEYBOARD_AUDIT && (
+            <Grid size={{ xs: 12, sm: 3 }}>
+              <Button fullWidth variant="outlined" size="medium" startIcon={<KeyboardIcon />}
+                      disabled={!sessionOpen || scanning !== "idle"} onClick={keyboard}>
+                Keyboard Audit
+              </Button>
+            </Grid>
+          )}
+          {scanning === "full" ? (
+            <Grid size={{ xs: 12, sm: SHOW_KEYBOARD_AUDIT ? 6 : 8 }}>
+              <Button fullWidth color="error" variant="outlined" size="medium"
                       startIcon={<StopCircleIcon />} onClick={stopFullScan}>
                 Stop Full Scan
               </Button>
-            ) : (
-              <Button fullWidth variant="outlined" size="large" startIcon={<AutoAwesomeIcon />}
-                      disabled={!sessionOpen || scanning !== "idle"} onClick={fullScan}>
-                Full Scan
-              </Button>
-            )}
-          </Grid>
+            </Grid>
+          ) : (
+            <>
+              <Grid size={{ xs: 12, sm: SHOW_KEYBOARD_AUDIT ? 3 : 4 }}>
+                <Button fullWidth variant="outlined" size="medium" startIcon={<AutoAwesomeIcon />}
+                        disabled={!sessionOpen || scanning !== "idle"} onClick={() => fullScan(false)}>
+                  Full Scan
+                </Button>
+              </Grid>
+              <Grid size={{ xs: 12, sm: SHOW_KEYBOARD_AUDIT ? 3 : 4 }}>
+                <Tooltip title="Full Scan plus a per-page AI expert audit — finds what scanners miss (meaningful names, focus management, keyboard operation, state exposure, visual-vs-programmatic mismatch). Uses your configured AI provider and consumes tokens per page.">
+                  <span style={{ display: "block", width: "100%" }}>
+                    <Button fullWidth variant="contained" color="secondary" size="medium" startIcon={<AutoFixHighIcon />}
+                            disabled={!sessionOpen || scanning !== "idle"} onClick={() => fullScan(true)}>
+                      AI Full Scan
+                    </Button>
+                  </span>
+                </Tooltip>
+              </Grid>
+            </>
+          )}
         </Grid>
         <Stack direction="row" spacing={2} alignItems="center" sx={{ mt: 2 }}>
           <TextField size="small" type="number" label="Max pages" value={maxPages}
@@ -547,7 +573,7 @@ export default function ScanCenter() {
             <Box sx={{ mb: 2 }}><AiReportPanel report={currentScan.aiReport} /></Box>
           )}
           <ViolationList violations={currentScan.violations} />
-          {currentScan.keyboardFindings && (
+          {SHOW_KEYBOARD_AUDIT && currentScan.keyboardFindings && (
             <>
               <Typography variant="overline" sx={{ display: "block", mt: 3 }}>
                 Keyboard findings · {currentScan.keyboardFindings.length}
