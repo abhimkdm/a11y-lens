@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Paper, Typography, Stack, Button, TextField, MenuItem, Checkbox, Chip, Box,
   Alert, LinearProgress, IconButton, Tooltip, Collapse, Divider, ToggleButton,
-  ToggleButtonGroup, InputAdornment,
+  ToggleButtonGroup, InputAdornment, FormControlLabel,
 } from "@mui/material";
 import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
@@ -15,6 +15,7 @@ import DeleteIcon from "@mui/icons-material/DeleteOutline";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import StopIcon from "@mui/icons-material/Stop";
 import SendIcon from "@mui/icons-material/Send";
+import OpenInBrowserIcon from "@mui/icons-material/OpenInBrowser";
 import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import { useAppStore } from "../store/useAppStore";
@@ -62,7 +63,7 @@ function shortLabel(u: CrawlUrl) {
 
 export default function CrawlExplorer() {
   const nav = useNavigate();
-  const { setPendingUrlList } = useAppStore();
+  const { setPendingUrlList, sessionOpen, setSessionOpen } = useAppStore();
 
   const [crawls, setCrawls] = useState<CrawlSummary[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -79,14 +80,56 @@ export default function CrawlExplorer() {
   const [maxPages, setMaxPages] = useState(100);
   const [maxDepth, setMaxDepth] = useState(3);
   const [listText, setListText] = useState("");
+  // Keep the crawl inside the app area: stay under the root's path section and
+  // ignore global header/nav/footer links. Both default on — that's what keeps
+  // a /ecare crawl from wandering out into the marketing site.
+  const [confinePath, setConfinePath] = useState(true);
+  const [skipChrome, setSkipChrome] = useState(true);
+  // Optional explicit section URLs, one per line — guaranteed starting points so
+  // discovery doesn't depend on finding a link to each section.
+  const [seedUrlsText, setSeedUrlsText] = useState("");
 
   const [status, setStatus] = useState<{ running: boolean; discovered: number; currentUrl: string | null; log: { msg: string }[] } | null>(null);
   const pollRef = useRef<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const [sessionBusy, setSessionBusy] = useState(false);
 
   const refreshCrawls = useCallback(() => {
     api.crawlList().then((r) => r.ok && setCrawls(r.crawls)).catch(() => {});
   }, []);
+
+  // Keep the shared session flag honest when landing on this page directly —
+  // a session opened earlier (here or in Scan Center) should already unlock Discover.
+  useEffect(() => {
+    api.status().then((r) => setSessionOpen(!!r?.open)).catch(() => {});
+  }, [setSessionOpen]);
+
+  // Open a real Chrome window pointed at the root URL so the user can log in by
+  // hand. The crawl then runs INSIDE that authenticated session. Uses the exact
+  // same session machinery as Scan Center, so a session opened here is the same
+  // one Scan Center sees, and vice-versa.
+  // Mirror the backend's confinement math so the UI can show the user exactly
+  // which path prefix a crawl will be limited to.
+  const seedPathHint = (() => {
+    try {
+      const segs = new URL(seed).pathname.replace(/\/+$/, "").split("/").filter(Boolean);
+      const prefix = segs.length ? `/${(segs.length > 1 ? segs.slice(0, 1) : segs).join("/")}/` : "/";
+      return prefix === "/" ? "" : ` Staying within ${prefix}`;
+    } catch { return ""; }
+  })();
+
+  const startSession = async () => {
+    setError(""); setNotice("");
+    const target = seed && /^https?:\/\/\S+/.test(seed) ? seed : undefined;
+    setSessionBusy(true);
+    const r = await api.openSession(target).catch((e) => ({ ok: false, error: String(e) }));
+    setSessionBusy(false);
+    if (!r.ok) { setError(r.error ?? "Could not start a browser session. Is the sidecar running?"); return; }
+    setSessionOpen(true);
+    setNotice(target
+      ? "Chrome session started. Log in if needed, navigate to where you want discovery to begin, then click Discover."
+      : "Chrome session started. Enter a Root URL above (or navigate in Chrome), then click Discover.");
+  };
 
   const loadCrawl = useCallback((id: number) => {
     api.crawlGet(id).then((r) => {
@@ -111,12 +154,13 @@ export default function CrawlExplorer() {
         ? { source, urls: listText.split(/\r?\n/).map((s) => s.trim()).filter(Boolean), name: "URL list" }
         : source === "sitemap"
         ? { source, sitemapUrl: seed, maxPages }
-        : { source, rootUrl: seed, maxPages, maxDepth };
+        : { source, rootUrl: seed, maxPages, maxDepth, confinePath, skipChrome,
+            seedUrls: seedUrlsText.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) };
 
     const r = await api.crawlStart(opts).catch((e) => ({ ok: false, error: String(e) }));
     if (!r.ok) { setError(r.error ?? "Could not start the crawl"); return; }
     if (!r.usingSession) {
-      setNotice("No browser session is open, so pages behind a login won't be discovered. Open a session in Scan Center first if the site needs authentication.");
+      setNotice("The browser session doesn't seem active anymore (was Chrome closed?). Pages behind a login may be missed. Click Start Session again if needed.");
     }
 
     pollRef.current = window.setInterval(async () => {
@@ -286,9 +330,14 @@ export default function CrawlExplorer() {
 
       {/* --- discover ---------------------------------------------------- */}
       <Paper sx={{ p: 3 }}>
-        <Typography variant="overline">Discover pages</Typography>
-        <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} sx={{ mt: 1.5 }}>
-          <TextField select size="small" label="Source" value={source} sx={{ width: 170 }}
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
+          <Typography variant="overline">Discover pages</Typography>
+          {sessionOpen
+            ? <Chip size="small" color="success" label="Session open" />
+            : <Chip size="small" variant="outlined" label="No session" />}
+        </Stack>
+        <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} sx={{ mt: 1.5 }} alignItems={{ md: "center" }}>
+          <TextField select size="small" label="Source" value={source} sx={{ width: 170, flexShrink: 0 }}
                      onChange={(e) => setSource(e.target.value as typeof source)}>
             <MenuItem value="crawl">Crawl from root URL</MenuItem>
             <MenuItem value="sitemap">Import sitemap.xml</MenuItem>
@@ -296,9 +345,10 @@ export default function CrawlExplorer() {
           </TextField>
 
           {source !== "list" ? (
-            <TextField size="small" fullWidth value={seed} onChange={(e) => setSeed(e.target.value)}
+            <TextField size="small" value={seed} onChange={(e) => setSeed(e.target.value)}
               label={source === "sitemap" ? "Sitemap URL" : "Root URL"}
-              placeholder={source === "sitemap" ? "https://example.com/sitemap.xml" : "https://example.com"} />
+              placeholder={source === "sitemap" ? "https://example.com/sitemap.xml" : "https://example.com"}
+              sx={{ flex: 1, minWidth: 260, maxWidth: 560 }} />
           ) : (
             <TextField size="small" fullWidth multiline minRows={2} maxRows={6}
               label="URLs (one per line)" value={listText}
@@ -307,29 +357,69 @@ export default function CrawlExplorer() {
 
           {source === "crawl" && (
             <>
-              <TextField size="small" type="number" label="Max pages" value={maxPages} sx={{ width: 110 }}
+              <TextField size="small" type="number" label="Max pages" value={maxPages} sx={{ width: 110, flexShrink: 0 }}
                          onChange={(e) => setMaxPages(Math.max(1, Math.min(2000, +e.target.value || 100)))} />
-              <TextField size="small" type="number" label="Max depth" value={maxDepth} sx={{ width: 110 }}
+              <TextField size="small" type="number" label="Max depth" value={maxDepth} sx={{ width: 110, flexShrink: 0 }}
                          onChange={(e) => setMaxDepth(Math.max(1, Math.min(10, +e.target.value || 3)))} />
             </>
           )}
 
+          {/* Start a Chrome session for manual login. Disabled once one is open. */}
+          <Button variant={sessionOpen ? "outlined" : "contained"} color={sessionOpen ? "success" : "primary"}
+                  startIcon={<OpenInBrowserIcon />} onClick={startSession}
+                  disabled={sessionBusy || sessionOpen} sx={{ whiteSpace: "nowrap", flexShrink: 0 }}>
+            {sessionBusy ? "Starting…" : sessionOpen ? "Session ready" : "Start Session"}
+          </Button>
+
           {status?.running ? (
             <Button variant="outlined" color="error" startIcon={<StopIcon />}
-                    onClick={() => api.crawlStop().catch(() => {})} sx={{ whiteSpace: "nowrap" }}>
+                    onClick={() => api.crawlStop().catch(() => {})} sx={{ whiteSpace: "nowrap", flexShrink: 0 }}>
               Stop
             </Button>
           ) : (
-            <Button variant="contained" startIcon={<PlayArrowIcon />} onClick={startCrawl}
-                    sx={{ whiteSpace: "nowrap" }}>
-              Discover
-            </Button>
+            <Tooltip title={sessionOpen ? "" : "Start a browser session first so discovery runs inside your logged-in Chrome."}>
+              <span>
+                <Button variant="contained" startIcon={<PlayArrowIcon />} onClick={startCrawl}
+                        disabled={!sessionOpen} sx={{ whiteSpace: "nowrap", flexShrink: 0 }}>
+                  Discover
+                </Button>
+              </span>
+            </Tooltip>
           )}
         </Stack>
 
+        {source === "crawl" && (
+          <Stack direction="row" spacing={2} sx={{ mt: 1 }} flexWrap="wrap">
+            <Tooltip title="Only discover pages under the root URL's section (e.g. /ecare/…). Links up to the domain root or other sections are ignored.">
+              <FormControlLabel
+                control={<Checkbox size="small" checked={confinePath} onChange={(e) => setConfinePath(e.target.checked)} />}
+                label={<Typography variant="body2">Stay within URL path</Typography>}
+              />
+            </Tooltip>
+            <Tooltip title="Ignore links in the global header, primary nav, and footer (site chrome). In-app side menus inside the page content are still followed.">
+              <FormControlLabel
+                control={<Checkbox size="small" checked={skipChrome} onChange={(e) => setSkipChrome(e.target.checked)} />}
+                label={<Typography variant="body2">Skip header / nav / footer links</Typography>}
+              />
+            </Tooltip>
+          </Stack>
+        )}
+
+        {source === "crawl" && (
+          <TextField
+            size="small" fullWidth multiline minRows={2} maxRows={6} sx={{ mt: 1.5 }}
+            label="Section URLs (optional, one per line)"
+            placeholder={"/ecare/products\n/ecare/finance\n/ecare/orders\n/ecare/settings/profile\n/ecare/support/tickets"}
+            value={seedUrlsText}
+            onChange={(e) => setSeedUrlsText(e.target.value)}
+            helperText="Guaranteed starting points — each is crawled directly and its subpages discovered from there. Use when a section isn't linked from the landing page. Relative (/ecare/orders) or full URLs both work."
+          />
+        )}
+
         <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
+          Click <strong>Start Session</strong> to open Chrome, log in manually if the site needs it, then <strong>Discover</strong>.
           Discovery is read-only: it reads links, and never clicks, submits, or follows a logout link.
-          If the site needs a login, open a browser session in Scan Center first — the crawl runs inside it.
+          {confinePath && source === "crawl" && seedPathHint}
         </Typography>
 
         {status?.running && (

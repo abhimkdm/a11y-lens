@@ -59,15 +59,84 @@ function fetchInPage(url) {
     .catch((e) => ({ status: 0, contentType: "", finalUrl: url, body: "", error: String(e) }));
 }
 
+// Read links + title from the LIVE rendered DOM (used for SPA support). Runs
+// inside the page via page.evaluate, so `document` is the fully-rendered app.
+// Resolves hrefs to absolute via the element's .href property (the browser does
+// the base resolution for us, including SPA client-side routes).
+function extractLinksLive() {
+  const CHROME_HINT = /(^|[-_ ])(masthead|topbar|top-bar|global[-_]?nav|site[-_]?header|site[-_]?footer|main[-_]?nav|primary[-_]?nav|mega[-_]?menu|navbar|header|footer|utility[-_]?nav|breadcrumbs?)([-_ ]|$)/i;
+  const inMain = (el) => !!el.closest('main, [role="main"], #main, #content, .app-content, .page-content, [class*="content"]');
+  const regionOf = (el) => {
+    if (inMain(el)) return "content";
+    let node = el;
+    while (node && node !== document.body) {
+      const tag = node.tagName ? node.tagName.toLowerCase() : "";
+      const role = (node.getAttribute && node.getAttribute("role")) || "";
+      if (tag === "header" || tag === "footer" || role === "banner" || role === "contentinfo") return "chrome";
+      if (tag === "nav" || role === "navigation") return "chrome";
+      const idc = `${node.id || ""} ${(node.className && node.className.toString && node.className.toString()) || ""}`;
+      if (CHROME_HINT.test(idc)) return "chrome";
+      node = node.parentElement;
+    }
+    return "content";
+  };
+
+  const title = (document.title || "").trim().slice(0, 200);
+  const links = [];
+  const seen = new Set();
+  // Real anchors — .href is already absolute and correct for the current route.
+  for (const a of document.querySelectorAll("a[href]")) {
+    const href = a.href;                                  // absolute, browser-resolved
+    if (!href || seen.has(href)) continue;
+    if (/^(javascript:|mailto:|tel:|#)/i.test(a.getAttribute("href") || "")) continue;
+    seen.add(href);
+    links.push({ href, text: (a.textContent || "").trim().slice(0, 80), region: regionOf(a) });
+  }
+  return { title, links };
+}
+
 // Parse links + title out of an HTML string, inside the page (DOMParser is free there).
 function parseHtmlInPage({ html, base }) {
   const doc = new DOMParser().parseFromString(html, "text/html");
   const title = (doc.querySelector("title")?.textContent || "").trim().slice(0, 200);
   const links = [];
+
+  // Is this link part of the global site chrome (the top header / primary nav /
+  // footer) rather than the in-app content? Those chrome links lead OUT of the
+  // app area (e.g. the marketing site's Mobil / Internet / TV sections) even
+  // when they share the same domain, so the crawl should not follow them.
+  //
+  // Heuristic, in priority order:
+  //   - inside <header>, <footer>, or a <nav>/[role=banner|navigation|
+  //     contentinfo] that is NOT itself inside the main content region, OR
+  //   - carries a class/id that looks like site chrome (masthead, topbar,
+  //     global-nav, mega-menu, site-header, etc.)
+  // A link inside <main> / [role=main] / an app-shell content region is treated
+  // as in-app even if it's technically within some <nav>, because in-app side
+  // menus (the "Mit YouSee" rail) live there and we DO want those.
+  const CHROME_HINT = /(^|[-_ ])(masthead|topbar|top-bar|global[-_]?nav|site[-_]?header|site[-_]?footer|main[-_]?nav|primary[-_]?nav|mega[-_]?menu|navbar|header|footer|utility[-_]?nav|breadcrumbs?)([-_ ]|$)/i;
+
+  const inMain = (el) => !!el.closest('main, [role="main"], #main, #content, .app-content, .page-content, [class*="content"]');
+  const regionOf = (el) => {
+    // A link that lives in the app's main content is in-app, period.
+    if (inMain(el)) return "content";
+    let node = el;
+    while (node && node !== doc.body) {
+      const tag = node.tagName ? node.tagName.toLowerCase() : "";
+      const role = (node.getAttribute && node.getAttribute("role")) || "";
+      if (tag === "header" || tag === "footer" || role === "banner" || role === "contentinfo") return "chrome";
+      if (tag === "nav" || role === "navigation") return "chrome";
+      const idc = `${(node.id || "")} ${(node.className && node.className.toString && node.className.toString()) || ""}`;
+      if (CHROME_HINT.test(idc)) return "chrome";
+      node = node.parentElement;
+    }
+    return "content";
+  };
+
   for (const a of doc.querySelectorAll("a[href]")) {
     const href = a.getAttribute("href");
     if (!href) continue;
-    links.push({ href, text: (a.textContent || "").trim().slice(0, 80) });
+    links.push({ href, text: (a.textContent || "").trim().slice(0, 80), region: regionOf(a) });
   }
   return { title, links, base };
 }
@@ -121,13 +190,38 @@ export function createCrawlExplorer() {
     }
   }
 
+  // Navigate the REAL browser to the URL, let the app render, then read links
+  // and title from the LIVE DOM. This is what makes discovery work on
+  // single-page apps (Angular/React/Vue): a raw fetch of a SPA returns an empty
+  // shell with no links because the nav is built by JavaScript after load. Only
+  // by actually rendering the page in the session do those links exist to find.
+  // Region tagging (chrome vs content) runs here too, against the live DOM.
+  async function renderAndExtract(page, url) {
+    try {
+      const resp = await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+      const status = resp ? resp.status() : 0;
+      // Give client-side routing/rendering a moment to paint the nav. networkidle
+      // is ideal but can hang on apps that poll, so cap it.
+      await page.waitForLoadState("networkidle", { timeout: 6000 }).catch(() => {});
+      await page.waitForTimeout(400);
+
+      const finalUrl = page.url();
+      const data = await page.evaluate(extractLinksLive);
+      return { status, contentType: "text/html", finalUrl, title: data.title, links: data.links };
+    } catch (e) {
+      return { status: 0, contentType: "", finalUrl: url, title: "", links: [], error: String(e) };
+    }
+  }
+
   async function parseHtml(page, html, base) {
     if (page) return page.evaluate(parseHtmlInPage, { html, base });
     // Node has no DOMParser; a light regex fallback is enough for link discovery.
     const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "").trim().slice(0, 200);
     const links = [];
     for (const m of html.matchAll(/<a\s[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]{0,80}?)<\/a>/gi)) {
-      links.push({ href: m[1], text: m[2].replace(/<[^>]+>/g, "").trim() });
+      // The regex fallback can't see DOM structure, so it can't tell chrome from
+      // content — treat everything as content (the path filter still applies).
+      links.push({ href: m[1], text: m[2].replace(/<[^>]+>/g, "").trim(), region: "content" });
     }
     return { title, links, base };
   }
@@ -181,46 +275,97 @@ export function createCrawlExplorer() {
   }
 
   /** BFS link discovery from a root URL. */
-  async function fromCrawl(page, rootUrl, { maxPages = 100, maxDepth = 3, store, crawlId }) {
-    const origin = new URL(rootUrl).origin;
+  async function fromCrawl(page, rootUrl, { maxPages = 100, maxDepth = 3, store, crawlId, confinePath = true, skipChrome = true, seedUrls = [] }) {
+    const rootParsed = new URL(rootUrl);
+    const origin = rootParsed.origin;
+
+    // Confinement prefix: when confinePath is on, only follow links whose path
+    // starts UNDER the root's directory. For a root of /ecare/products we confine
+    // to /ecare/ (the containing section), so /ecare/orders and /ecare/profile
+    // are in but /mobil, /internet, /tv (the marketing site) are out — even
+    // though they're the same origin.
+    const rawPath = rootParsed.pathname.replace(/\/+$/, "");           // strip trailing slash
+    const segs = rawPath.split("/").filter(Boolean);
+    // If root is a deep page (/ecare/products), confine to its parent section
+    // (/ecare/). If root is already a section (/ecare), confine to that.
+    const confineSegs = segs.length > 1 ? segs.slice(0, 1) : segs;      // top section
+    const confinePrefix = confineSegs.length ? `/${confineSegs.join("/")}/` : "/";
+    const underPrefix = (p) => {
+      const path = p.endsWith("/") ? p : p + "/";
+      return path.startsWith(confinePrefix) || p === confinePrefix.replace(/\/$/, "");
+    };
+
+    log(`Confinement: ${confinePath ? `path "${confinePrefix}"` : "whole domain"}${skipChrome ? ", skipping header/nav/footer links" : ""}.`);
+
     const seen = new Set([rootUrl]);
     const queue = [{ url: rootUrl, parent: null, depth: 0 }];
 
     store.upsertUrl(crawlId, { url: rootUrl, parentUrl: null, depth: 0 });
     state.discovered = 1;
 
+    // Explicit seed URLs: guaranteed starting points. Even if a section is never
+    // linked from a crawled page (only reachable via a button or JS action that
+    // link-following can't see), listing it here crawls it directly and lets its
+    // own subpages be discovered from there. Normalized and de-duplicated; each
+    // still passes the same origin/confinement/deny checks as any other URL.
+    for (const raw of Array.isArray(seedUrls) ? seedUrls : []) {
+      const s = normalizeUrl(raw, rootUrl);
+      if (!s || seen.has(s)) continue;
+      if (new URL(s).origin !== origin) { log(`Seed skipped (off-site): ${raw}`); continue; }
+      if (confinePath && !underPrefix(new URL(s).pathname)) { log(`Seed skipped (outside ${confinePrefix}): ${raw}`); continue; }
+      seen.add(s);
+      store.upsertUrl(crawlId, { url: s, parentUrl: rootUrl, depth: 1 });
+      state.discovered++;
+      queue.push({ url: s, parent: rootUrl, depth: 1 });
+      log(`Seed added: ${s}`);
+    }
+
     while (queue.length && state.running && state.discovered < maxPages) {
       const { url, depth } = queue.shift();
       state.queued = queue.length;
       state.currentUrl = url;
 
-      const res = await fetchUrl(page, url);
-      const isHtml = (res.contentType || "").includes("html");
-
-      store.upsertUrl(crawlId, {
-        url,
-        depth,
-        statusCode: res.status,
-        contentType: res.contentType,
-      });
-
-      if (!isHtml || !res.body) {
-        log(`${url} — ${res.status || "no response"}${isHtml ? "" : " (not HTML, not expanded)"}`);
-        continue;
+      // With a browser session, render the page and read the LIVE DOM — the only
+      // way to discover links in a single-page app. Without one, fall back to the
+      // raw fetch + HTML parse (fine for classic server-rendered sites).
+      let title, links, status, contentType;
+      if (page) {
+        const r = await renderAndExtract(page, url);
+        status = r.status; contentType = "text/html";
+        title = r.title; links = r.links;
+        store.upsertUrl(crawlId, { url, depth, title, statusCode: status, contentType });
+        if (r.error) { log(`${url} — render failed: ${r.error.slice(0, 100)}`); continue; }
+        log(`${url} — ${status} — ${links.length} link(s) [rendered]`);
+      } else {
+        const res = await fetchUrl(page, url);
+        const isHtml = (res.contentType || "").includes("html");
+        store.upsertUrl(crawlId, { url, depth, statusCode: res.status, contentType: res.contentType });
+        if (!isHtml || !res.body) {
+          log(`${url} — ${res.status || "no response"}${isHtml ? "" : " (not HTML, not expanded)"}`);
+          continue;
+        }
+        const parsed = await parseHtml(page, res.body, url);
+        title = parsed.title; links = parsed.links; status = res.status;
+        store.upsertUrl(crawlId, { url, depth, title, statusCode: res.status, contentType: res.contentType });
+        log(`${url} — ${res.status} — ${links.length} link(s)`);
       }
-
-      const { title, links } = await parseHtml(page, res.body, url);
-      store.upsertUrl(crawlId, { url, depth, title, statusCode: res.status, contentType: res.contentType });
-      log(`${url} — ${res.status} — ${links.length} link(s)`);
 
       if (depth >= maxDepth) continue;
 
-      for (const { href, text } of links) {
+      for (const { href, text, region } of links) {
         if (state.discovered >= maxPages) break;
+
+        // Skip global site chrome (top header / primary nav / footer). Those
+        // links lead out of the app area into the marketing site even when they
+        // share the origin. In-app side menus live in the content region and are
+        // tagged "content", so they still get followed.
+        if (skipChrome && region === "chrome") continue;
 
         const child = normalizeUrl(href, url);
         if (!child) continue;
         if (new URL(child).origin !== origin) continue;          // stay on-site
+        // Path confinement: stay under the root's section (e.g. /ecare/).
+        if (confinePath && !underPrefix(new URL(child).pathname)) continue;
         if (SKIP_EXT.test(child)) continue;                       // assets, not pages
         if (DENY_URL.test(child) || DENY_TEXT.test(text)) {
           // Following a logout link mid-crawl would end the session the entire

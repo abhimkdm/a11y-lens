@@ -469,6 +469,14 @@ app.post("/crawl/start", async (req, res) => {
     return res.status(409).json({ ok: false, error: "A crawl is already running." });
   }
   const { source = "crawl", rootUrl, sitemapUrl, urls, name, maxPages, maxDepth } = req.body ?? {};
+  // Default both ON: confine to the root's path section and skip site chrome
+  // (header/nav/footer) links, so a crawl seeded at /ecare/products stays inside
+  // the app area instead of wandering out into the marketing site.
+  const confinePath = req.body?.confinePath !== false;
+  const skipChrome = req.body?.skipChrome !== false;
+  const seedUrls = Array.isArray(req.body?.seedUrls)
+    ? req.body.seedUrls.map((s) => String(s).trim()).filter(Boolean)
+    : [];
 
   const seed = rootUrl || sitemapUrl || (Array.isArray(urls) && urls[0]);
   if (!seed) return res.status(400).json({ ok: false, error: "A root URL, sitemap URL, or URL list is required." });
@@ -496,6 +504,9 @@ app.post("/crawl/start", async (req, res) => {
       urls,
       maxPages: Math.min(Number(maxPages) || 100, 2000),
       maxDepth: Math.min(Number(maxDepth) || 3, 10),
+      confinePath,
+      skipChrome,
+      seedUrls,
       store: crawls,
       crawlId,
     }).catch((e) => {
