@@ -474,6 +474,12 @@ app.post("/crawl/start", async (req, res) => {
   // the app area instead of wandering out into the marketing site.
   const confinePath = req.body?.confinePath !== false;
   const skipChrome = req.body?.skipChrome !== false;
+  const collapseTemplates = req.body?.collapseTemplates !== false;
+  const routeTemplates = Array.isArray(req.body?.routeTemplates)
+    ? req.body.routeTemplates.map((s) => String(s).trim()).filter(Boolean)
+    : [];
+  const routeVars = (req.body?.routeVars && typeof req.body.routeVars === "object") ? req.body.routeVars : {};
+  const autoHarvest = req.body?.autoHarvest !== false;
   const seedUrls = Array.isArray(req.body?.seedUrls)
     ? req.body.seedUrls.map((s) => String(s).trim()).filter(Boolean)
     : [];
@@ -507,6 +513,10 @@ app.post("/crawl/start", async (req, res) => {
       confinePath,
       skipChrome,
       seedUrls,
+      collapseTemplates,
+      routeTemplates,
+      routeVars,
+      autoHarvest,
       store: crawls,
       crawlId,
     }).catch((e) => {

@@ -19,6 +19,7 @@ import OpenInBrowserIcon from "@mui/icons-material/OpenInBrowser";
 import { useNavigate } from "react-router-dom";
 import { api } from "../services/api";
 import { useAppStore } from "../store/useAppStore";
+import { expandRouteTemplates, parseVariables } from "../utils/routeTemplates";
 
 interface CrawlUrl {
   url: string;
@@ -85,9 +86,18 @@ export default function CrawlExplorer() {
   // a /ecare crawl from wandering out into the marketing site.
   const [confinePath, setConfinePath] = useState(true);
   const [skipChrome, setSkipChrome] = useState(true);
+  // Keep one representative page per URL template (collapse /orders/1, /orders/2…).
+  const [collapseTemplates, setCollapseTemplates] = useState(true);
   // Optional explicit section URLs, one per line — guaranteed starting points so
   // discovery doesn't depend on finding a link to each section.
   const [seedUrlsText, setSeedUrlsText] = useState("");
+  // Named ID values for {token} placeholders in the Section URLs above. One real
+  // value per dynamic id (e.g. productId = a real line), reused across templates.
+  const [routeVarsText, setRouteVarsText] = useState("");
+  // Learn real ids from the pages the crawler renders, so {token} routes resolve
+  // without anyone typing ids. On by default; manual Route variables still work
+  // (and override) when you want a specific instance.
+  const [autoHarvest, setAutoHarvest] = useState(true);
 
   const [status, setStatus] = useState<{ running: boolean; discovered: number; currentUrl: string | null; log: { msg: string }[] } | null>(null);
   const pollRef = useRef<number | null>(null);
@@ -117,6 +127,12 @@ export default function CrawlExplorer() {
       return prefix === "/" ? "" : ` Staying within ${prefix}`;
     } catch { return ""; }
   })();
+
+  // Expand {token} placeholders in the Section URLs using the route variables.
+  const expansion = useMemo(
+    () => expandRouteTemplates(seedUrlsText, parseVariables(routeVarsText)),
+    [seedUrlsText, routeVarsText]
+  );
 
   const startSession = async () => {
     setError(""); setNotice("");
@@ -154,8 +170,14 @@ export default function CrawlExplorer() {
         ? { source, urls: listText.split(/\r?\n/).map((s) => s.trim()).filter(Boolean), name: "URL list" }
         : source === "sitemap"
         ? { source, sitemapUrl: seed, maxPages }
-        : { source, rootUrl: seed, maxPages, maxDepth, confinePath, skipChrome,
-            seedUrls: seedUrlsText.split(/\r?\n/).map((s) => s.trim()).filter(Boolean) };
+        : { source, rootUrl: seed, maxPages, maxDepth, confinePath, skipChrome, collapseTemplates,
+            // Static lines (no tokens) are guaranteed seeds; lines with {tokens}
+            // become templates the sidecar resolves — from manual Route variables
+            // and/or ids harvested live from the crawled pages.
+            seedUrls: seedUrlsText.split(/\r?\n/).map((s) => s.trim()).filter((l) => l && !l.startsWith("#") && !/\{\w+\}/.test(l)),
+            routeTemplates: seedUrlsText.split(/\r?\n/).map((s) => s.trim()).filter((l) => l && !l.startsWith("#") && /\{\w+\}/.test(l)),
+            routeVars: parseVariables(routeVarsText),
+            autoHarvest };
 
     const r = await api.crawlStart(opts).catch((e) => ({ ok: false, error: String(e) }));
     if (!r.ok) { setError(r.error ?? "Could not start the crawl"); return; }
@@ -402,18 +424,64 @@ export default function CrawlExplorer() {
                 label={<Typography variant="body2">Skip header / nav / footer links</Typography>}
               />
             </Tooltip>
+            <Tooltip title="Keep one representative page per template. /ecare/orders/1001, /1002, /1003… all share markup, so only the first is crawled. Stops data-heavy sections exploding into thousands of identical pages.">
+              <FormControlLabel
+                control={<Checkbox size="small" checked={collapseTemplates} onChange={(e) => setCollapseTemplates(e.target.checked)} />}
+                label={<Typography variant="body2">Collapse template pages</Typography>}
+              />
+            </Tooltip>
           </Stack>
         )}
 
         {source === "crawl" && (
-          <TextField
-            size="small" fullWidth multiline minRows={2} maxRows={6} sx={{ mt: 1.5 }}
-            label="Section URLs (optional, one per line)"
-            placeholder={"/ecare/products\n/ecare/finance\n/ecare/orders\n/ecare/settings/profile\n/ecare/support/tickets"}
-            value={seedUrlsText}
-            onChange={(e) => setSeedUrlsText(e.target.value)}
-            helperText="Guaranteed starting points — each is crawled directly and its subpages discovered from there. Use when a section isn't linked from the landing page. Relative (/ecare/orders) or full URLs both work."
-          />
+          <>
+            <TextField
+              size="small" fullWidth multiline minRows={2} maxRows={8} sx={{ mt: 1.5 }}
+              label="Section URLs (optional, one per line — supports {tokens})"
+              placeholder={"/portal/ecare/products\n/portal/ecare/finance\n/portal/ecare/orders\n/portal/ecare/products/{productId}/usage\n/portal/ecare/finance/{accountNumber}/invoices/pay\n/portal/ecare/support/tickets/{ticketId}"}
+              value={seedUrlsText}
+              onChange={(e) => setSeedUrlsText(e.target.value)}
+              helperText="Static lines are crawled directly. Lines with {tokens} are resolved using real ids — harvested live from the pages the crawler renders (no ids needed), or from Route variables below if you want a specific instance."
+            />
+            <FormControlLabel
+              sx={{ mt: 0.5 }}
+              control={<Checkbox size="small" checked={autoHarvest} onChange={(e) => setAutoHarvest(e.target.checked)} />}
+              label={
+                <Tooltip title="As the crawler renders list pages (/products, /orders…), it reads the real ids from the detail-page links and fills your {token} routes automatically — including button-only tab pages that share the same id. Keeps one representative per template.">
+                  <Typography variant="body2">Auto-fill ids from crawled pages (no ids typed)</Typography>
+                </Tooltip>
+              }
+            />
+            <TextField
+              size="small" fullWidth multiline minRows={2} maxRows={6} sx={{ mt: 0.5 }}
+              label="Route variables (optional — name = value per line)"
+              placeholder={"productId = PROD-100237\naccountNumber = AC-8847213"}
+              value={routeVarsText}
+              onChange={(e) => setRouteVarsText(e.target.value)}
+              helperText={autoHarvest
+                ? "Optional. Leave blank to let auto-fill find ids for you. Fill a token here to force a SPECIFIC instance instead."
+                : "Auto-fill is off, so {token} lines only resolve from the values you set here. Unfilled tokens are skipped."}
+            />
+            {(() => {
+              const tokenLines = seedUrlsText.split(/\r?\n/).map((s) => s.trim()).filter((l) => l && !l.startsWith("#") && /\{\w+\}/.test(l));
+              const staticLines = seedUrlsText.split(/\r?\n/).map((s) => s.trim()).filter((l) => l && !l.startsWith("#") && !/\{\w+\}/.test(l));
+              if (!tokenLines.length && !staticLines.length) return null;
+              const unresolved = [...new Set(expansion.skipped.flatMap((s) => s.missing))];
+              return (
+                <Alert severity="info" sx={{ mt: 1 }}>
+                  {staticLines.length} static page{staticLines.length === 1 ? "" : "s"} seeded directly
+                  {tokenLines.length > 0 && <>, {tokenLines.length} template{tokenLines.length === 1 ? "" : "s"} with {"{tokens}"}</>}
+                  {tokenLines.length > 0 && (
+                    autoHarvest
+                      ? <> — ids will be filled automatically from the crawl{expansion.urls.length ? ` (${expansion.urls.length} already resolved from Route variables)` : ""}.</>
+                      : unresolved.length
+                        ? <> — {unresolved.length} token{unresolved.length === 1 ? "" : "s"} unfilled ({unresolved.join(", ")}); those lines will be skipped since auto-fill is off.</>
+                        : <> — all resolved from Route variables.</>
+                  )}
+                </Alert>
+              );
+            })()}
+          </>
         )}
 
         <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>

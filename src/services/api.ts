@@ -247,7 +247,8 @@ export const api = {
     source: "crawl" | "sitemap" | "list";
     rootUrl?: string; sitemapUrl?: string; urls?: string[];
     name?: string; maxPages?: number; maxDepth?: number;
-    confinePath?: boolean; skipChrome?: boolean; seedUrls?: string[];
+    confinePath?: boolean; skipChrome?: boolean; seedUrls?: string[]; collapseTemplates?: boolean;
+    routeTemplates?: string[]; routeVars?: Record<string, string>; autoHarvest?: boolean;
   }) =>
     req(`${BASE}/crawl/start`, {
       method: "POST", headers: { "Content-Type": "application/json" },
