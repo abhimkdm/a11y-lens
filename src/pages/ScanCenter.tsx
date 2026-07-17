@@ -24,6 +24,7 @@ import BrowserSetup from "../components/BrowserSetup";
 import ExpertAuditPanel from "../components/ExpertAuditPanel";
 import ScoreRing from "../components/ScoreRing";
 import VerifyPathPanel from "../components/VerifyPathPanel";
+import AgentActivityPanel from "../components/AgentActivityPanel";
 
 // Feature flag — the AI Expert Audit (incl. cross-check, probes, scope selector)
 // is fully built and tested but hidden from the UI for now. Flip to `true` to
@@ -95,6 +96,9 @@ export default function ScanCenter() {
   const [overlayMsg, setOverlayMsg] = useState("");
   const [maxPages, setMaxPages] = useState(10);
   const [crawl, setCrawl] = useState<{ pages: { url: string; title: string; score: number }[]; log: { msg: string }[]; currentUrl: string | null } | null>(null);
+  // Describes the currently running scan so the agent panel shows only the
+  // agents this run actually enabled, and a real progress denominator when known.
+  const [runInfo, setRunInfo] = useState<{ aiAudit: boolean; interact: boolean; total: number | null } | null>(null);
   const pollRef = useRef<number | null>(null);
 
   const [useUrlList, setUseUrlList] = useState(false);
@@ -266,6 +270,7 @@ export default function ScanCenter() {
     if (!r.ok) { setError(r.error ?? "Could not start full scan"); return; }
     // Non-sticky: a mutating run can't be left armed for the next scan.
     setAllowMutations(false);
+    setRunInfo({ aiAudit, interact, total: useUrlList ? urlList.length : null });
     beginCrawlPolling();
   };
 
@@ -307,6 +312,7 @@ export default function ScanCenter() {
     }).catch((e) => ({ ok: false, error: String(e) }));
     if (!r.ok) { setError(r.error ?? "Could not start replay scan"); return; }
     setAllowMutations(false);
+    setRunInfo({ aiAudit, interact, total: recordingObj?.checkpoints?.length ?? null });
     beginCrawlPolling();
   };
 
@@ -572,23 +578,28 @@ export default function ScanCenter() {
             {urlListError && <Alert severity="error" sx={{ mt: 1 }}>{urlListError}</Alert>}
           </Box>
         )}
-        {scanning !== "idle" && <LinearProgress sx={{ mt: 2 }} />}
+        {scanning !== "idle" && !(scanning === "full" && crawl) && <LinearProgress sx={{ mt: 2 }} />}
         {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
         {scanning === "full" && crawl && (
-          <Paper variant="outlined" sx={{ mt: 2, p: 2, bgcolor: "#0E1116" }}>
-            <Typography variant="overline">
-              Exploring · {crawl.pages.length} page{crawl.pages.length === 1 ? "" : "s"} scanned
-            </Typography>
-            {crawl.currentUrl && (
-              <Typography variant="body2" noWrap color="primary">{crawl.currentUrl}</Typography>
-            )}
-            <Stack spacing={0.25} sx={{ mt: 1 }}>
-              {crawl.log.map((l, i) => (
-                <Typography key={i} variant="caption" color="text.secondary"
-                            sx={{ fontFamily: "monospace" }}>{l.msg}</Typography>
-              ))}
-            </Stack>
-          </Paper>
+          <>
+            <AgentActivityPanel
+              pages={crawl.pages.length}
+              logs={crawl.log}
+              currentUrl={crawl.currentUrl}
+              aiAudit={runInfo?.aiAudit ?? false}
+              interact={runInfo?.interact ?? false}
+              total={runInfo?.total ?? null}
+            />
+            <Paper variant="outlined" sx={{ mt: 2, p: 2, bgcolor: "#0E1116" }}>
+              <Typography variant="overline">Activity log</Typography>
+              <Stack spacing={0.25} sx={{ mt: 1 }}>
+                {crawl.log.map((l, i) => (
+                  <Typography key={i} variant="caption" color="text.secondary"
+                              sx={{ fontFamily: "monospace" }}>{l.msg}</Typography>
+                ))}
+              </Stack>
+            </Paper>
+          </>
         )}
       </Paper>
 

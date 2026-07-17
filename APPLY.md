@@ -1,18 +1,16 @@
-# A11y Lens — Logs tidy-up
+# A11y Lens — fix clipped pulse animation on the active agent
 
-One file: src/pages/Logs.tsx. Verified with `tsc -b` + `vite build`.
+One file: src/components/AgentActivityPanel.tsx (drop-in replacement for the one
+from the agent-panel delta). `tsc -b` + `vite build` clean.
 
-## Changes
-1. **Tile title capped at 50 chars + "…"** — long API-error blobs no longer fill the
-   collapsed row. The full message still shows when expanded, and on hover (added a
-   Tooltip with the complete text).
-2. **Detail shows only Code + Message** — the stored detail's stack trace and local
-   file paths (…/sidecar/ai.mjs:135:26) are stripped. For an API error it renders:
-       Code: 400
-       Message: Multimodal data provided, but model does not support multimodal requests.
-   If a detail has no parseable API error, it falls back to removing stack frames and
-   path lines so non-API errors still read cleanly.
+## What was wrong
+The active orb's pulse ring and glow expand outward, but the agent row used
+`overflowX: "auto"` (for horizontal scroll on narrow windows). Per CSS, when one
+overflow axis is auto/scroll the other is no longer treated as "visible" — so the
+row was also clipping vertically, cutting the top off the growing ring.
 
-## Note
-The Copy button still copies the full raw detail (stack included) — that's the one place
-a developer usually wants the paths for debugging. Say the word and I'll clean that too.
+## The fix
+Kept the horizontal-scroll behaviour but added interior padding to the row
+(pt: 3, pb: 1.5, px: 1.5). Padding sits *inside* the overflow clip box, so the
+ring and glow now have room to expand into it instead of being cut off. No change
+to the animation itself or any logic.
