@@ -14,6 +14,7 @@ import ConstructionIcon from "@mui/icons-material/Construction";
 import StopCircleIcon from "@mui/icons-material/StopCircle";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import FiberManualRecordIcon from "@mui/icons-material/FiberManualRecord";
+import ReplayIcon from "@mui/icons-material/Replay";
 import PsychologyIcon from "@mui/icons-material/Psychology";
 import { api } from "../services/api";
 import { useAppStore } from "../store/useAppStore";
@@ -22,6 +23,7 @@ import AiReportPanel from "../components/AiReportPanel";
 import BrowserSetup from "../components/BrowserSetup";
 import ExpertAuditPanel from "../components/ExpertAuditPanel";
 import ScoreRing from "../components/ScoreRing";
+import VerifyPathPanel from "../components/VerifyPathPanel";
 
 // Feature flag — the AI Expert Audit (incl. cross-check, probes, scope selector)
 // is fully built and tested but hidden from the UI for now. Flip to `true` to
@@ -113,6 +115,18 @@ export default function ScanCenter() {
   const [recordedCount, setRecordedCount] = useState(0);
   const recordPollRef = useRef<number | null>(null);
 
+  // v2 action recording: the full recording object (steps + selector chains),
+  // a human label, whether replay should use the just-recorded or imported one,
+  // and the hidden file input used to import a saved recording.
+  type Recording = {
+    kind: string; steps: unknown[]; checkpoints?: number[];
+    entries?: { url: string; title?: string }[];
+  } & Record<string, unknown>;
+  const [recordingObj, setRecordingObj] = useState<Recording | null>(null);
+  const [recordLabel, setRecordLabel] = useState("");
+  const [replaySource, setReplaySource] = useState<"current" | "imported">("current");
+  const recordImportRef = useRef<HTMLInputElement>(null);
+
   const startRecording = async () => {
     setError("");
     const r = await api.recordStart().catch((e) => ({ ok: false, error: String(e) }));
@@ -121,7 +135,7 @@ export default function ScanCenter() {
     setRecordedCount(0);
     recordPollRef.current = window.setInterval(async () => {
       const st = await api.recordStatus().catch(() => null);
-      if (st?.ok) setRecordedCount(st.entries.length);
+      if (st?.ok) setRecordedCount(st.steps ?? st.entries.length);
     }, 1000);
   };
 
@@ -130,18 +144,50 @@ export default function ScanCenter() {
     const r = await api.recordStop().catch((e) => ({ ok: false, error: String(e) }));
     setRecording(false);
     if (!r.ok) { setError(r.error ?? "Could not stop recording"); return; }
-    const urls: string[] = r.entries.map((e: { url: string }) => e.url);
+    const urls: string[] = (r.entries ?? []).map((e: { url: string }) => e.url);
+    const steps: number = r.steps ?? 0;
+    const cps: number = r.checkpoints ?? urls.length;
+    setRecordingObj(r.recording ?? null);
+    setReplaySource("current");
+    setRecordLabel(`Recorded path (${cps} checkpoint${cps === 1 ? "" : "s"}, ${steps} action${steps === 1 ? "" : "s"})`);
+    if (!steps) setError("Recording captured no actions — click through the journey in the browser before stopping.");
+    // Keep the recorded URLs available for the classic custom-URL-list scan too.
     setUrlList(urls);
-    setUrlListError(urls.length ? "" : "Recording captured no pages — try navigating around before stopping.");
+    setUrlListError("");
     setUrlListSource(`Recorded path (${urls.length} page${urls.length === 1 ? "" : "s"})`);
-    setUseUrlList(true); // recording a path implies you want to scan it
+    setUseUrlList(urls.length > 0);
+  };
+
+  // Import a previously saved recording (from disk) and hold it for replay.
+  const importRecording = async (file: File) => {
+    setError("");
+    let parsed: Recording;
+    try { parsed = JSON.parse(await file.text()); }
+    catch { setError("That file isn't valid JSON."); return; }
+    if (!parsed || parsed.kind !== "a11y-lens-recording" || !Array.isArray(parsed.steps)) {
+      setError("Not an A11y Lens recording (missing the a11y-lens-recording marker)."); return;
+    }
+    const r = await api.recordImport(parsed).catch((e) => ({ ok: false, error: String(e) }));
+    if (!r.ok) { setError(r.error ?? "Could not import recording."); return; }
+    setRecordingObj(parsed);
+    setReplaySource("imported");
+    setRecordLabel(
+      `Imported (${r.checkpoints} checkpoint${r.checkpoints === 1 ? "" : "s"}, ${r.steps} action${r.steps === 1 ? "" : "s"}` +
+      `${r.masked ? `, ${r.masked} masked` : ""})`
+    );
+    if (Array.isArray(parsed.entries)) {
+      const urls = parsed.entries.map((e) => e.url);
+      setUrlList(urls);
+      setUrlListSource(`Imported path (${urls.length} page${urls.length === 1 ? "" : "s"})`);
+    }
   };
 
   const downloadRecordedPath = () => {
-    const blob = new Blob([JSON.stringify({ urls: urlList }, null, 2)], { type: "application/json" });
+    if (!recordingObj) return;
+    const blob = new Blob([JSON.stringify(recordingObj, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `a11y-lens-path_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.json`;
+    a.download = `a11y-lens-recording_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
   };
@@ -220,6 +266,12 @@ export default function ScanCenter() {
     if (!r.ok) { setError(r.error ?? "Could not start full scan"); return; }
     // Non-sticky: a mutating run can't be left armed for the next scan.
     setAllowMutations(false);
+    beginCrawlPolling();
+  };
+
+  // Replay scan and Full scan both drive the SAME crawler, so they report through
+  // the same status endpoint — this polling loop is shared by both.
+  const beginCrawlPolling = () => {
     setScanning("full");
     pollRef.current = window.setInterval(async () => {
       const st = await api.fullScanStatus().catch(() => null);
@@ -234,6 +286,28 @@ export default function ScanCenter() {
         }
       }
     }, 1500);
+  };
+
+  // Replay the recorded/imported path and scan every state it reveals. Reuses the
+  // crawler (and its polling) via the navigator seam on the sidecar.
+  const replayScan = async (aiAudit = false) => {
+    if (!recordingObj) { setError("Record or import a path first."); return; }
+    if (aiAudit && (!aiProvider?.provider || !aiProvider?.model)) {
+      setError("AI replay scan needs an AI provider. Configure one in Settings first."); return;
+    }
+    let valueProfile: unknown = null;
+    if (interact && allowMutations && valueProfileText.trim()) {
+      try { valueProfile = JSON.parse(valueProfileText); setValueProfileError(""); }
+      catch { setValueProfileError("Value profile is not valid JSON."); setError("Fix the value profile JSON, or clear it."); return; }
+    }
+    setError(""); setCrawl(null);
+    const r = await api.replayStart({
+      scan: true, source: replaySource, ai: aiProvider, aiAudit,
+      ...(interact ? { interact: true, allowMutations, valueProfile } : {}),
+    }).catch((e) => ({ ok: false, error: String(e) }));
+    if (!r.ok) { setError(r.error ?? "Could not start replay scan"); return; }
+    setAllowMutations(false);
+    beginCrawlPolling();
   };
 
   const stopFullScan = async () => { await api.fullScanStop().catch(() => {}); };
@@ -315,13 +389,14 @@ export default function ScanCenter() {
       <Paper sx={{ p: 3 }}>
         <Typography variant="overline">2 · Record a path (optional)</Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 1.5 }}>
-          Click through a specific journey yourself — login, add to cart, checkout — and A11y Lens
-          remembers every page you visit. Scan that exact path later instead of relying on AI navigation.
+          Click through a specific journey yourself — login, add to cart, checkout — and A11y Lens records every
+          action (with resilient selectors), so it can reproduce the exact path later even on a single-page app where
+          the URL never changes. Save it to disk and re-import it any time.
         </Typography>
-        <Stack direction="row" spacing={1.5} alignItems="center">
+        <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
           {recording ? (
             <Button variant="contained" color="error" startIcon={<FiberManualRecordIcon />} onClick={stopRecording}>
-              Stop recording ({recordedCount} page{recordedCount === 1 ? "" : "s"})
+              Stop recording ({recordedCount} action{recordedCount === 1 ? "" : "s"})
             </Button>
           ) : (
             <Button variant="outlined" color="secondary" startIcon={<FiberManualRecordIcon />}
@@ -329,14 +404,42 @@ export default function ScanCenter() {
               Record path
             </Button>
           )}
-          {recording && <Chip size="small" color="error" label="● Recording — navigate in the browser now" />}
-          {!recording && urlList.length > 0 && urlListSource.startsWith("Recorded") && (
+          {recording && <Chip size="small" color="error" label="● Recording — click through the journey in the browser now" />}
+
+          {!recording && (
             <>
-              <Chip size="small" color="success" label={urlListSource} />
+              <Button size="small" variant="outlined" startIcon={<UploadFileIcon />}
+                      onClick={() => recordImportRef.current?.click()}>
+                Import recording
+              </Button>
+              <input ref={recordImportRef} type="file" accept="application/json,.json" hidden
+                     onChange={(e) => { const f = e.target.files?.[0]; if (f) importRecording(f); e.currentTarget.value = ""; }} />
+            </>
+          )}
+
+          {!recording && recordingObj && (
+            <>
+              <Chip size="small" color="success" label={recordLabel} />
               <Button size="small" onClick={downloadRecordedPath}>Save as JSON</Button>
             </>
           )}
         </Stack>
+
+        {!recording && recordingObj && (
+          <>
+            <VerifyPathPanel sessionOpen={sessionOpen} source={replaySource} busy={scanning !== "idle"} onError={setError} />
+            <Stack direction="row" spacing={1.5} sx={{ mt: 2 }} flexWrap="wrap" useFlexGap>
+              <Button variant="contained" color="secondary" startIcon={<ReplayIcon />}
+                      disabled={!sessionOpen || scanning !== "idle"} onClick={() => replayScan(false)}>
+                Replay &amp; scan
+              </Button>
+              <Button variant="contained" startIcon={<AutoFixHighIcon />}
+                      disabled={!sessionOpen || scanning !== "idle"} onClick={() => replayScan(true)}>
+                Replay &amp; AI scan
+              </Button>
+            </Stack>
+          </>
+        )}
       </Paper>
 
       <Paper sx={{ p: 3 }}>

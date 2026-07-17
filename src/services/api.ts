@@ -53,6 +53,30 @@ export const api = {
   recordStart: () => req(`${BASE}/record/start`, { method: "POST" }),
   recordStop: () => req(`${BASE}/record/stop`, { method: "POST" }),
   recordStatus: () => req(`${BASE}/record/status`),
+  // v2 recorded paths: export a saved recording, import one back, and replay it
+  // either as a dry-run (scan:false) or a full scan of every revealed state.
+  recordExport: () => req(`${BASE}/record/export`),
+  recordImport: (recording: unknown) =>
+    req(`${BASE}/record/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ recording }),
+    }),
+  replayStart: (opts: {
+    scan?: boolean;
+    source?: "current" | "imported";
+    ai?: unknown;
+    aiAudit?: boolean;
+    interact?: boolean;
+    allowMutations?: boolean;
+    valueProfile?: unknown;
+  }) =>
+    req(`${BASE}/record/replay/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(opts),
+    }),
+  replayStatus: () => req(`${BASE}/record/replay/status`),
   quickScan: () => req(`${BASE}/scan/quick`, { method: "POST" }),
   keyboardScan: () => req(`${BASE}/scan/keyboard`, { method: "POST" }),
 

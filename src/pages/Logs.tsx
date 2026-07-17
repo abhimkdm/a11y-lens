@@ -25,6 +25,40 @@ const LEVEL = {
   info:    { color: "#8AC7FF", label: "info" },
 } as const;
 
+// Tile titles can be very long (a whole API error blob). Cap them at 50 chars
+// with an ellipsis; the full message is still shown when the entry is expanded.
+const TITLE_MAX = 50;
+const truncate = (s: string, n = TITLE_MAX) => (s.length > n ? `${s.slice(0, n).trimEnd()}…` : s);
+
+// Pull the code + human message out of an API error blob, ignoring the type and
+// any surrounding text.
+function extractApiError(text: string): { code?: string; message?: string } | null {
+  const codeM = text.match(/"code"\s*:\s*"?(\d+)"?/);
+  const msgM = text.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  if (!codeM && !msgM) return null;
+  let message: string | undefined;
+  if (msgM) { try { message = JSON.parse(`"${msgM[1]}"`); } catch { message = msgM[1]; } }
+  return { code: codeM?.[1], message };
+}
+
+// The stored detail is usually an error + a stack trace full of local file paths
+// (…/sidecar/ai.mjs:135:26). Show only the code and message; if there's no API
+// error to parse, at least strip the stack frames and path lines.
+function cleanDetail(detail: string): string {
+  const err = extractApiError(detail);
+  if (err && (err.code || err.message)) {
+    return [err.code ? `Code: ${err.code}` : "", err.message ? `Message: ${err.message}` : ""]
+      .filter(Boolean).join("\n");
+  }
+  return detail
+    .split("\n")
+    .filter((line) => !/^\s*at\s+/.test(line))                                  // stack frames
+    .filter((line) => !/(file:\/\/|[A-Za-z]:\\|\/[\w.\-/]+\.(mjs|js|ts):\d+)/.test(line)) // path lines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export default function Logs() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [filter, setFilter] = useState<"all" | "error" | "warning">("all");
@@ -96,7 +130,9 @@ export default function Logs() {
                   border: `1px solid ${LEVEL[l.level]?.color ?? "#8AC7FF"}55`,
                 }} />
               <Chip size="small" variant="outlined" label={l.source} sx={{ height: 22, fontSize: 11 }} />
-              <Typography variant="body2" sx={{ flex: 1, minWidth: 0 }} noWrap>{l.message}</Typography>
+              <Tooltip title={l.message}>
+                <Typography variant="body2" sx={{ flex: 1, minWidth: 0 }} noWrap>{truncate(l.message)}</Typography>
+              </Tooltip>
               <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
                 {new Date(l.timestamp).toLocaleString()}
               </Typography>
@@ -115,7 +151,7 @@ export default function Logs() {
             {l.detail && (
               <>
                 <Typography variant="overline">Detail</Typography>
-                <Box component="pre" sx={{ ...preSx, maxHeight: 320, overflow: "auto" }}>{l.detail}</Box>
+                <Box component="pre" sx={{ ...preSx, maxHeight: 320, overflow: "auto" }}>{cleanDetail(l.detail)}</Box>
               </>
             )}
 
