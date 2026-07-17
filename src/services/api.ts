@@ -7,7 +7,14 @@ async function req(url: string, init?: RequestInit) {
   let res: Response;
   try {
     res = await fetch(url, init);
-  } catch {
+  } catch (e) {
+    const msg = String((e as Error)?.name ?? (e as Error)?.message ?? e);
+    if (/timeout|aborted/i.test(msg)) {
+      return {
+        ok: false,
+        error: "Connection test timed out. The provider may be slow to cold-start — try again, or pick a smaller model in Settings.",
+      };
+    }
     return {
       ok: false,
       error: "Can't reach the automation sidecar at localhost:8787. Start it with `npm run sidecar` in a separate terminal, then try again.",
@@ -163,6 +170,7 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(cfg),
+      signal: AbortSignal.timeout(120_000),
     }),
   saveAiSettings: (cfg: { provider: string; model: string; apiKey: string; baseUrl?: string }) =>
     req(`${BASE}/settings/ai`, {

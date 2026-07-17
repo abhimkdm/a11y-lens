@@ -11,11 +11,68 @@
 export const AI_PROVIDER_DEFAULTS = {
   kimi: {
     model: "kimi-k2.6",
+    // Global Kimi/Moonshot API. China-mainland keys use https://api.moonshot.cn/v1 instead.
     baseUrl: "https://litellm.ai.netcracker.cloud/v1",
+  },
+  nvidia: {
+    model: "meta/llama-3.3-70b-instruct",
+    // Smaller model for Settings → Test Connection — 70B cold starts can take minutes.
+    testModel: "meta/llama-3.1-8b-instruct",
+    baseUrl: "https://integrate.api.nvidia.com/v1",
   },
 };
 
-async function callProvider(ai, prompt, maxTokens) {
+function nonEmpty(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+export function resolveProviderFields(provider, { model, baseUrl, stored, test = false } = {}) {
+  const defaults = AI_PROVIDER_DEFAULTS[provider] ?? {};
+  const storedMatch = stored?.provider === provider;
+  const resolvedModel =
+    nonEmpty(model) ||
+    (storedMatch && nonEmpty(stored?.model)) ||
+    (test && defaults.testModel) ||
+    defaults.model;
+  const resolvedBaseUrl =
+    nonEmpty(baseUrl) ||
+    (storedMatch && nonEmpty(stored?.baseUrl)) ||
+    defaults.baseUrl;
+  return { model: resolvedModel, baseUrl: resolvedBaseUrl, defaults };
+}
+
+function extractApiError(status, body) {
+  if (body?.error?.message) return body.error.message;
+  if (body?.detail) return String(body.detail);
+  if (body?.title && body?.status) return `${body.title} (HTTP ${body.status})`;
+  if (body?.message) return String(body.message);
+  return `HTTP ${status}: ${JSON.stringify(body).slice(0, 200)}`;
+}
+
+async function openAiCompatChat({ baseUrl, apiKey, model, messages, maxTokens, responseFormat, timeoutMs = 120_000 }) {
+  if (!model) throw new Error("No model configured. Set one in Settings.");
+  const body = { model, max_tokens: maxTokens, messages };
+  if (responseFormat) body.response_format = responseFormat;
+  const res = await fetch(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const text = await res.text();
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`Unexpected response from ${baseUrl} (HTTP ${res.status}): ${text.slice(0, 200)}`);
+  }
+  if (!res.ok || parsed.error || (parsed.status && parsed.status >= 400)) {
+    throw new Error(extractApiError(res.status, parsed));
+  }
+  return parsed;
+}
+
+async function callProvider(ai, prompt, maxTokens, opts = {}) {
   if (ai.provider === "ollama") {
     const r = await fetch("http://localhost:11434/api/chat", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -59,17 +116,21 @@ async function callProvider(ai, prompt, maxTokens) {
     };
   }
 
-  // openai-compatible (OpenAI, Kimi, Azure-compatible gateways, LM Studio, etc.)
+  // openai-compatible (OpenAI, Kimi, NVIDIA NIM, Azure-compatible gateways, LM Studio, etc.)
   if (!ai.apiKey) throw new Error("No API key set for this provider. Add one in Settings.");
-  const defaults = AI_PROVIDER_DEFAULTS[ai.provider] ?? {};
-  const base = ai.baseUrl || defaults.baseUrl || "https://api.openai.com/v1";
-  const model = ai.model || defaults.model;
-  const r = await fetch(`${base}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${ai.apiKey}` },
-    body: JSON.stringify({ model, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
-  }).then(x => x.json());
-  if (r.error) throw new Error(r.error.message ?? JSON.stringify(r.error));
+  const { model, baseUrl } = resolveProviderFields(ai.provider, {
+    model: ai.model,
+    baseUrl: ai.baseUrl,
+    test: opts.test,
+  });
+  const r = await openAiCompatChat({
+    baseUrl: baseUrl || "https://api.openai.com/v1",
+    apiKey: ai.apiKey,
+    model,
+    maxTokens,
+    messages: [{ role: "user", content: prompt }],
+    timeoutMs: opts.timeoutMs,
+  });
   return {
     content: r.choices?.[0]?.message?.content ?? "",
     usage: { inputTokens: r.usage?.prompt_tokens ?? 0, outputTokens: r.usage?.completion_tokens ?? 0 },
@@ -80,10 +141,10 @@ async function callProvider(ai, prompt, maxTokens) {
 // any caller that has to price the request (the AI Report's plain-text fallback
 // path, in particular). aiChat() below is unchanged for its four existing
 // callers, which only ever wanted the string.
-export async function aiChatWithUsage(ai, prompt, maxTokens = 2000) {
+export async function aiChatWithUsage(ai, prompt, maxTokens = 2000, opts = {}) {
   if (!ai?.provider) throw new Error("No AI provider configured. Set one in Settings.");
   try {
-    const { content, usage } = await callProvider(ai, prompt, maxTokens);
+    const { content, usage } = await callProvider(ai, prompt, maxTokens, opts);
     return { text: content, usage };
   } catch (e) {
     throw translateProviderError(e, ai);
@@ -94,7 +155,7 @@ function translateProviderError(e, ai) {
   // Node's fetch throws a bare "fetch failed" for connection-level
   // problems (server down, DNS failure, etc). Translate per provider.
   const raw = String(e?.message ?? e);
-  if (/fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN/i.test(raw)) {
+  if (/fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|timed out|TimeoutError|aborted/i.test(raw)) {
     if (ai.provider === "ollama") {
       return new Error(
         `Can't reach Ollama at localhost:11434. Make sure Ollama is installed and running ` +
@@ -109,10 +170,10 @@ function translateProviderError(e, ai) {
   return e;
 }
 
-export async function aiChat(ai, prompt, maxTokens = 2000) {
+export async function aiChat(ai, prompt, maxTokens = 2000, opts = {}) {
   if (!ai?.provider) throw new Error("No AI provider configured. Set one in Settings.");
   try {
-    const { content } = await callProvider(ai, prompt, maxTokens);
+    const { content } = await callProvider(ai, prompt, maxTokens, opts);
     return content;
   } catch (e) {
     throw translateProviderError(e, ai);
@@ -225,11 +286,10 @@ export async function aiStructured(ai, { system, user, images = [], schema, maxT
       return withUsage(parse(r.candidates?.[0]?.content?.parts?.[0]?.text ?? ""));
     }
 
-    // openai-compatible (OpenAI, Kimi/LiteLLM, LM Studio, gateways)
+    // openai-compatible (OpenAI, Kimi/NVIDIA NIM/LiteLLM, LM Studio, gateways)
     if (!ai.apiKey) throw new Error("No API key set for this provider. Add one in Settings.");
-    const defaults = AI_PROVIDER_DEFAULTS[ai.provider] ?? {};
-    const base = ai.baseUrl || defaults.baseUrl || "https://api.openai.com/v1";
-    const model = ai.model || defaults.model;
+    const { model, baseUrl } = resolveProviderFields(ai.provider, { model: ai.model, baseUrl: ai.baseUrl });
+    const base = baseUrl || "https://api.openai.com/v1";
     const content = [
       ...images.map((b64) => ({
         type: "image_url",
@@ -238,44 +298,42 @@ export async function aiStructured(ai, { system, user, images = [], schema, maxT
       { type: "text", text: user },
     ];
 
-    const body = {
-      model,
-      max_tokens: maxTokens,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: images.length ? content : user },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "expert_audit", strict: false, schema },
-      },
-    };
+    const messages = [
+      { role: "system", content: system },
+      { role: "user", content: images.length ? content : user },
+    ];
 
-    let r = await fetch(`${base}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${ai.apiKey}` },
-      body: JSON.stringify(body),
-    }).then((x) => x.json());
-
-    // Some OpenAI-compatible gateways reject json_schema (or images). Degrade
-    // gracefully rather than failing the whole audit: retry as plain JSON mode.
-    if (r.error) {
-      const msg = String(r.error.message ?? "");
+    let r;
+    try {
+      r = await openAiCompatChat({
+        baseUrl: base,
+        apiKey: ai.apiKey,
+        model,
+        maxTokens,
+        messages,
+        responseFormat: {
+          type: "json_schema",
+          json_schema: { name: "expert_audit", strict: false, schema },
+        },
+      });
+    } catch (e) {
+      const msg = String(e?.message ?? "");
+      // Some OpenAI-compatible gateways reject json_schema (or images). Degrade
+      // gracefully rather than failing the whole audit: retry as plain JSON mode.
       if (/response_format|json_schema|image|content/i.test(msg)) {
-        r = await fetch(`${base}/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${ai.apiKey}` },
-          body: JSON.stringify({
-            model,
-            max_tokens: maxTokens,
-            messages: [
-              { role: "system", content: system + "\n\nReply with ONLY valid JSON matching the requested shape. No prose, no markdown fences." },
-              { role: "user", content: images.length ? content : user },
-            ],
-          }),
-        }).then((x) => x.json());
+        r = await openAiCompatChat({
+          baseUrl: base,
+          apiKey: ai.apiKey,
+          model,
+          maxTokens,
+          messages: [
+            { role: "system", content: system + "\n\nReply with ONLY valid JSON matching the requested shape. No prose, no markdown fences." },
+            { role: "user", content: images.length ? content : user },
+          ],
+        });
+      } else {
+        throw e;
       }
-      if (r.error) throw new Error(r.error.message ?? JSON.stringify(r.error));
     }
     usage = {
       inputTokens: r.usage?.prompt_tokens ?? 0,
@@ -284,7 +342,7 @@ export async function aiStructured(ai, { system, user, images = [], schema, maxT
     return withUsage(parse(r.choices?.[0]?.message?.content ?? ""));
   } catch (e) {
     const raw = String(e?.message ?? e);
-    if (/fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN/i.test(raw)) {
+    if (/fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|timed out|TimeoutError|aborted/i.test(raw)) {
       if (ai.provider === "ollama") {
         throw new Error(
           `Can't reach Ollama at localhost:11434. Make sure Ollama is running and that you've pulled "${ai.model}" — e.g. ollama pull ${ai.model}`

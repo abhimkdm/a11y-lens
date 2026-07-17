@@ -238,7 +238,7 @@ async function openAndCheck(page, candidate, { gear, deps, keyboardEvidence, log
   const measured = [];
   const st = after || {};
 
-  // Modal / dialog checks.
+  // Modal / dialog checks (NON-DESTRUCTIVE — safe to run while the state is open).
   if (st.dialogPresent) {
     if (!st.activeInDialog) {
       measured.push(mkFinding("focus-not-moved-to-dialog", "serious",
@@ -256,7 +256,45 @@ async function openAndCheck(page, candidate, { gear, deps, keyboardEvidence, log
         `dialog role="${st.dialogRole}" aria-modal="${st.dialogAriaModal ?? "unset"}"`,
         ["4.1.2"], triggerLabel));
     }
-    // Escape handling + focus return.
+  }
+
+  // Expandable trigger: aria-expanded correctness (non-destructive).
+  if (candidate.ariaExpanded !== null) {
+    const nowExpanded = await page.evaluate((sel) => {
+      const el = sel ? document.querySelector(sel) : null;
+      return el ? el.getAttribute("aria-expanded") : null;
+    }, candidate.selector).catch(() => null);
+    if (nowExpanded === candidate.ariaExpanded) {
+      measured.push(mkFinding("aria-expanded-not-updated", "serious",
+        "aria-expanded does not update when the control is toggled",
+        `The control exposes aria-expanded="${candidate.ariaExpanded}" and it did not change after activation, so assistive tech announces the wrong state (collapsed when open, or vice-versa).`,
+        "Update aria-expanded to reflect the real open/closed state whenever the control is toggled.",
+        `aria-expanded stayed "${candidate.ariaExpanded}" after toggle`,
+        ["4.1.2"], triggerLabel));
+    }
+  }
+
+  // AI expert audit of the OPEN state — this is the whole point of following the
+  // interaction: focus trapping, aria-modal, option announcement, and other
+  // things a snapshot of the CLOSED page can never show. Runs BEFORE the Escape
+  // probe below, because that probe may dismiss the dialog. deps.auditState is
+  // injected by the crawler only when AI Full Scan is on; absent otherwise, so
+  // this module keeps no hard dependency on the AI client. The measured + axe
+  // rule ids are suppressed so the model doesn't re-report facts already found.
+  const aiFindings = deps.auditState
+    ? await deps.auditState(page, {
+        url: page.url(),
+        label: `Interaction: ${triggerLabel}`,
+        trigger: triggerLabel,
+        kind: candidate.kind,
+        suppressRuleIds: [...measured.map((m) => m.id), ...violations.map((v) => v.id)],
+        keyboard,
+      }).catch(() => [])
+    : [];
+
+  // Escape handling + focus return (DESTRUCTIVE — may close the dialog, so it
+  // runs only after the AI audit has captured the open state).
+  if (st.dialogPresent) {
     const escBehaviour = await checkEscapeAndReturn(page, candidate).catch(() => null);
     if (escBehaviour && !escBehaviour.escapeClosed) {
       measured.push(mkFinding("dialog-no-escape", "moderate",
@@ -276,29 +314,13 @@ async function openAndCheck(page, candidate, { gear, deps, keyboardEvidence, log
     }
   }
 
-  // Expandable trigger: aria-expanded correctness.
-  if (candidate.ariaExpanded !== null) {
-    const nowExpanded = await page.evaluate((sel) => {
-      const el = sel ? document.querySelector(sel) : null;
-      return el ? el.getAttribute("aria-expanded") : null;
-    }, candidate.selector).catch(() => null);
-    if (nowExpanded === candidate.ariaExpanded) {
-      measured.push(mkFinding("aria-expanded-not-updated", "serious",
-        "aria-expanded does not update when the control is toggled",
-        `The control exposes aria-expanded="${candidate.ariaExpanded}" and it did not change after activation, so assistive tech announces the wrong state (collapsed when open, or vice-versa).`,
-        "Update aria-expanded to reflect the real open/closed state whenever the control is toggled.",
-        `aria-expanded stayed "${candidate.ariaExpanded}" after toggle`,
-        ["4.1.2"], triggerLabel));
-    }
-  }
-
   await reverse(page);
 
   return {
     label: `Interaction: ${triggerLabel}`,
-    violations: [...measured, ...violations],
+    violations: [...measured, ...violations, ...aiFindings],
     keyboard,
-    meta: { kind: candidate.kind, trigger: triggerLabel, gear },
+    meta: { kind: candidate.kind, trigger: triggerLabel, gear, aiAudited: !!deps.auditState },
   };
 }
 
@@ -396,14 +418,27 @@ async function probeValidation(page, { gear, deps, keyboardEvidence, log }) {
   const keyboard = keyboardEvidence ? await deps.captureKeyboard(page).catch(() => null) : null;
   log(`Validation probe: ${gotErrors ? "errors surfaced" : "no error state detected"}, ${measured.length} finding(s).`);
 
+  // AI expert audit of the surfaced error state — error announcement quality,
+  // aria-describedby wiring, focus-to-first-error — while the errors are visible.
+  const aiFindings = deps.auditState
+    ? await deps.auditState(page, {
+        url: page.url(),
+        label: "Interaction: form validation (empty submit)",
+        trigger: "form validation",
+        kind: "validation",
+        suppressRuleIds: [...measured.map((m) => m.id), ...violations.map((v) => v.id)],
+        keyboard,
+      }).catch(() => [])
+    : [];
+
   // Reset the form state we disturbed.
   await reverse(page);
 
   return {
     label: "Interaction: form validation (empty submit)",
-    violations: [...measured, ...violations],
+    violations: [...measured, ...violations, ...aiFindings],
     keyboard,
-    meta: { kind: "validation", gear },
+    meta: { kind: "validation", gear, aiAudited: !!deps.auditState },
   };
 }
 
@@ -489,11 +524,24 @@ async function fillAndSubmit(page, { valueProfile, deps, log, valueLog, keyboard
   const violations = await deps.scanPage(page).catch(() => []);
   const keyboard = keyboardEvidence ? await deps.captureKeyboard(page).catch(() => null) : null;
 
+  // AI expert audit of the post-submit state (success confirmation, error
+  // summary, or the page the submit navigated to) — announcement + focus.
+  const aiFindings = deps.auditState
+    ? await deps.auditState(page, {
+        url: page.url(),
+        label: "Interaction: form filled & submitted (Operate)",
+        trigger: submitLabel || "form submit",
+        kind: "operate-submit",
+        suppressRuleIds: violations.map((v) => v.id),
+        keyboard,
+      }).catch(() => [])
+    : [];
+
   return {
     label: "Interaction: form filled & submitted (Operate)",
-    violations,
+    violations: [...violations, ...aiFindings],
     keyboard,
-    meta: { kind: "operate-submit", gear: "Operate", submitLabel, fieldsFilled: valueLog.filter((v) => v.value != null).length },
+    meta: { kind: "operate-submit", gear: "Operate", submitLabel, fieldsFilled: valueLog.filter((v) => v.value != null).length, aiAudited: !!deps.auditState },
   };
 }
 

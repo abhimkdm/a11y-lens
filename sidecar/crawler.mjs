@@ -38,6 +38,7 @@ export function createCrawler() {
     aiUsage: { inputTokens: 0, outputTokens: 0 },  // AI Full Scan token total
     aiProviderModel: null,
     aiAuditPages: 0,
+    aiAuditStates: 0,   // interaction-revealed states (modals/drawers/validation) the AI audited
   };
 
   function log(msg) {
@@ -199,6 +200,36 @@ export function createCrawler() {
             scanPage: (p) => scanPage(p, { elementScreenshots: opts.elementScreenshots }),
             captureKeyboard: (p) => captureKeyboardEvidence(p),
             log,
+            // Only present when AI Full Scan is on: runs the manual-reviewer AI
+            // audit on the revealed state (open modal, drawer, menu, validation
+            // errors) while it is live, so focus-trap / aria-modal / announcement
+            // findings — which a closed-page snapshot can never surface — are
+            // caught. Findings carry source:"ai-audit" so they flow into the
+            // per-page record, cross-page dedupe, and cost report unchanged.
+            auditState: (opts.aiAudit && ai?.provider)
+              ? async (p, { url, label, trigger, kind, suppressRuleIds, keyboard }) => {
+                  try {
+                    state.aiProviderModel = { provider: ai.provider, model: ai.model };
+                    log(`AI audit (state): ${label} …`);
+                    const r = await auditPageAi(p, ai, {
+                      url,
+                      chromeOnly: false,
+                      suppressRuleIds: suppressRuleIds ?? [],
+                      keyboard: keyboard ?? null,
+                      stateContext: { trigger, kind },
+                    });
+                    state.aiUsage.inputTokens += r.usage?.inputTokens ?? 0;
+                    state.aiUsage.outputTokens += r.usage?.outputTokens ?? 0;
+                    state.aiAuditStates++;
+                    for (const w of r.warnings ?? []) log(w);
+                    log(`AI audit (state): ${label} — ${r.findings.length} finding(s)`);
+                    return r.findings;
+                  } catch (e) {
+                    log(`AI audit (state) failed on ${label}: ${String(e).slice(0, 120)}`);
+                    return [];
+                  }
+                }
+              : null,
           }
         );
         for (const sc of scenarios) {
@@ -376,6 +407,7 @@ export function createCrawler() {
         });
         state.result.aiAudit = {
           pagesAudited: state.aiAuditPages,
+          statesAudited: state.aiAuditStates,
           provider: `${state.aiProviderModel.provider}/${state.aiProviderModel.model}`,
           findingsRaw: aiFindings.length,
           groups: aiGroups,
@@ -383,7 +415,8 @@ export function createCrawler() {
         };
         state.result.usage = state.aiUsage;
         state.result.cost = cost;
-        log(`AI audit: ${state.aiAuditPages} pages, ${state.aiUsage.inputTokens + state.aiUsage.outputTokens} tokens, ${cost.usd === null ? "unpriced" : "$" + (cost.usd ?? 0).toFixed(4)}.`);
+        const stateNote = state.aiAuditStates ? ` + ${state.aiAuditStates} revealed state(s)` : "";
+        log(`AI audit: ${state.aiAuditPages} pages${stateNote}, ${state.aiUsage.inputTokens + state.aiUsage.outputTokens} tokens, ${cost.usd === null ? "unpriced" : "$" + (cost.usd ?? 0).toFixed(4)}.`);
       }
       log(`Done. ${state.pagesScanned.length} pages, ${violations.length} failing rules, average score ${avg}.`);
     } catch (e) {

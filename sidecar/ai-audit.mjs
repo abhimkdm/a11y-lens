@@ -171,6 +171,7 @@ export async function auditPageAi(page, ai, {
   suppressRuleIds = [],
   keyboard = null,          // captureKeyboardEvidence() result: { walk, focusProbe, findings, stats }
   maxTokens = 6000,
+  stateContext = null,      // { trigger, kind } when auditing an interaction-revealed state (modal/drawer/menu/validation)
 } = {}) {
   // --- capture evidence -----------------------------------------------------
   let screenshot = null;
@@ -201,11 +202,30 @@ export async function auditPageAi(page, ai, {
   // Keyboard trace + deterministic focus-visible probe (already measured in code).
   const keyboardBlock = formatKeyboardEvidence(keyboard);
 
+  // When auditing an interaction-revealed state, tell the model exactly that —
+  // otherwise it audits the whole page (including the inert content behind an
+  // open modal) and floods the report with base-page duplicates. The base page
+  // is audited separately, so here we point the model at the newly revealed UI.
+  const stateBlock = stateContext
+    ? [
+        "## INTERACTION-REVEALED STATE",
+        `This is NOT the initial page load. It is the state that appeared after activating "${stateContext.trigger}"${stateContext.kind ? ` (${stateContext.kind})` : ""}.`,
+        "Concentrate ONLY on the newly revealed UI and its interaction semantics:",
+        "- Dialog/drawer: did focus move in, is it trapped, aria-modal, role, Escape-to-close, focus return on close.",
+        "- Menu/listbox/combobox: option roles, selection/active-descendant announcement, keyboard operability.",
+        "- Expander/accordion/tab: aria-expanded / aria-selected correctness against the visible state.",
+        "- Validation: is each error announced (live region / role=alert), associated (aria-describedby), and is focus sent to the first error.",
+        "Do NOT report issues that belong to the base page behind this state — those are audited separately and would be duplicates.",
+        "",
+      ].join("\n")
+    : "";
+
   const userText = [
     `PAGE: ${url}`,
     `DOCUMENT TITLE: ${dom.title || "(empty)"}`,
     `H1: ${dom.h1 || "(none)"}`,
     "",
+    stateBlock,
     "## Accessibility tree (ARIA snapshot)",
     "```",
     ariaTree,

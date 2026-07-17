@@ -24,7 +24,7 @@ import { createCrawler } from "./crawler.mjs";
 import { generateAiReport } from "./report.mjs";
 import { deduplicate, generateExecutiveSummary } from "./report-site.mjs";
 import { buildSiteReport } from "./report-site-html.mjs";
-import { AI_PROVIDER_DEFAULTS, aiChat } from "./ai.mjs";
+import { AI_PROVIDER_DEFAULTS, aiChat, resolveProviderFields } from "./ai.mjs";
 import { createRecorder } from "./recorder.mjs";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -1051,11 +1051,15 @@ function securityConfig() {
 function resolveAi(reqAi) {
   const stored = settings.get("ai");
   const provider = reqAi?.provider || stored?.provider;
-  const defaults = AI_PROVIDER_DEFAULTS[provider] ?? {};
+  const { model, baseUrl } = resolveProviderFields(provider, {
+    model: reqAi?.model,
+    baseUrl: reqAi?.baseUrl,
+    stored,
+  });
   const ai = {
     provider,
-    model: reqAi?.model || stored?.model || defaults.model,
-    baseUrl: reqAi?.baseUrl || stored?.baseUrl || defaults.baseUrl,
+    model,
+    baseUrl,
     apiKey: stored?.apiKeyEnc ? decrypt(stored.apiKeyEnc) : reqAi?.apiKey,
   };
   assertProviderAllowed(ai.provider, securityConfig().localOnly);
@@ -1069,11 +1073,15 @@ function resolveAiB(reqAi) {
   const stored = settings.get("aiB");
   const provider = reqAi?.provider || stored?.provider;
   if (!provider) return null;
-  const defaults = AI_PROVIDER_DEFAULTS[provider] ?? {};
+  const { model, baseUrl } = resolveProviderFields(provider, {
+    model: reqAi?.model,
+    baseUrl: reqAi?.baseUrl,
+    stored,
+  });
   const ai = {
     provider,
-    model: reqAi?.model || stored?.model || defaults.model,
-    baseUrl: reqAi?.baseUrl || stored?.baseUrl || defaults.baseUrl,
+    model,
+    baseUrl,
     apiKey: stored?.apiKeyEnc ? decrypt(stored.apiKeyEnc) : reqAi?.apiKey,
   };
   assertProviderAllowed(ai.provider, securityConfig().localOnly);
@@ -1112,7 +1120,12 @@ app.post("/settings/ai/test", async (req, res) => {
   const started = Date.now();
   try {
     const ai = resolveAi(req.body ?? {});
-    const reply = await aiChat(ai, 'Reply with exactly the word "OK" and nothing else.', 10);
+    const reply = await aiChat(
+      ai,
+      'Reply with exactly the word "OK" and nothing else.',
+      16,
+      { test: true, timeoutMs: 90_000 },
+    );
     audit.log("settings.ai.test", `${ai.provider}/${ai.model} ok`);
     res.json({
       ok: true,

@@ -53,8 +53,8 @@ export default function Settings() {
     const d = providerDefaults[provider];
     setAiProvider({
       provider,
-      model: aiProvider.model || d?.model || "",
-      baseUrl: aiProvider.baseUrl || d?.baseUrl || "",
+      model: d?.model ?? "",
+      baseUrl: d?.baseUrl ?? "",
     });
   };
 

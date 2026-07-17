@@ -360,7 +360,7 @@ export default function ScanCenter() {
             <Grid size={{ xs: 12, sm: SHOW_KEYBOARD_AUDIT ? 6 : 8 }}>
               <Button fullWidth color="error" variant="outlined" size="medium"
                       startIcon={<StopCircleIcon />} onClick={stopFullScan}>
-                Stop Full Scan
+                Stop Scan
               </Button>
             </Grid>
           ) : (
