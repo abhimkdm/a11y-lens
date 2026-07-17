@@ -19,6 +19,7 @@ import { captureKeyboardEvidence } from "./keyboard-evidence.mjs";
 import { exploreInteractions } from "./interact.mjs";
 import { auditPageAi } from "./ai-audit.mjs";
 import { dedupeFindings } from "./ai-dedupe.mjs";
+import { smellToFinding } from "./replay.mjs";
 import { estimateCost } from "./cost.mjs";
 
 const require = createRequire(import.meta.url);
@@ -279,7 +280,48 @@ export function createCrawler() {
     }
 
     try {
-      if (urlList) {
+      if (opts.navigator) {
+        // Recorded-path replay. Instead of page.goto()-ing a list of URLs, we
+        // ask the replayer to DRIVE the recorded actions up to each checkpoint,
+        // then scan whatever DOM state that produced. This is what makes SPA
+        // journeys (open drawer, add to cart) scannable — there is no URL to go
+        // to, only a sequence of clicks that reveals the state.
+        const total = opts.checkpointCount || 0;
+        log(`Recorded-path replay: ${total} checkpoint${total === 1 ? "" : "s"} to reproduce and scan.`);
+        for (let i = 0; i < total; i++) {
+          if (!state.running) break;
+          let nav;
+          try {
+            nav = await opts.navigator(i, page);
+          } catch (e) {
+            log(`Replay stopped at checkpoint ${i + 1}/${total}: ${String(e.message ?? e).slice(0, 160)}`);
+            state.error = state.error || `Recorded path broke at checkpoint ${i + 1}: ${String(e.message ?? e).slice(0, 160)}`;
+            break;
+          }
+          if (!nav) break;
+          await page.waitForTimeout(400);
+          let url = nav.url;
+          const title = nav.title || (await page.title().catch(() => ""));
+          // SPA checkpoints often share a URL; disambiguate so recordScan does
+          // not merge two genuinely different states into one row.
+          let pageKey;
+          try { const u = new URL(url); pageKey = u.origin + u.pathname + u.search; } catch { pageKey = url; }
+          if (visited.has(pageKey)) { url = `${url}#state-${i + 1}`; }
+          visited.add(pageKey);
+
+          state.currentUrl = url;
+          log(`Scanning checkpoint ${i + 1}/${total}: ${title || pageKey}`);
+          const violations = await scanPage(page, { elementScreenshots: opts.elementScreenshots });
+          const kb = opts.keyboardEvidence === false ? null : await captureKeyboardEvidence(page).catch(() => null);
+          const aiFindings = await runAiAudit(page, url, violations, kb);
+          // Any control that could only be reached by XPath during replay is a
+          // Name/Role/Value smell — attach it right where it happened.
+          const smellFindings = (nav.smells || []).map(smellToFinding);
+          for (const sf of smellFindings) log(`⚠ ${sf.evidence} — no accessible/stable selector (WCAG 4.1.2)`);
+          recordScan(url, title, [...violations, ...aiFindings, ...smellFindings], kb);
+          await runInteractionPass(page, url, title);
+        }
+      } else if (urlList) {
         log(`Custom URL list scan started at ${origin} (${urlList.length} URL${urlList.length === 1 ? "" : "s"} provided).`);
         for (const raw of urlList) {
           if (!state.running) break;

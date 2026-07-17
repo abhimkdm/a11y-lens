@@ -24,8 +24,9 @@ import { createCrawler } from "./crawler.mjs";
 import { generateAiReport } from "./report.mjs";
 import { deduplicate, generateExecutiveSummary } from "./report-site.mjs";
 import { buildSiteReport } from "./report-site-html.mjs";
-import { AI_PROVIDER_DEFAULTS, aiChat, resolveProviderFields } from "./ai.mjs";
+import { AI_PROVIDER_DEFAULTS, aiChat } from "./ai.mjs";
 import { createRecorder } from "./recorder.mjs";
+import { createReplayer, replayAll, validateRecording } from "./replay.mjs";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -97,11 +98,26 @@ app.get("/session/status", async (_req, res) => {
   res.json({ open: true, url: page.url(), title: await page.title().catch(() => "") });
 });
 
-// ---- Path recorder -------------------------------------------------------
-// Record a QA person's manual navigation (login -> checkout -> confirm) as
-// an ordered URL list, then feed it straight into the same "custom URL
-// list" replay the crawler already supports for AI Full Scan.
+// ---- Path recorder (v2 — action capture) ---------------------------------
+// Record a QA person's manual journey (login -> open account -> checkout) as an
+// ordered list of ACTIONS with ranked selector chains — not just URLs — so the
+// path replays on a SPA where views don't change the URL. Export to disk, import
+// later, and replay either to reproduce the path or to scan every state it
+// reveals. Secrets are never captured (masked) and never written to disk.
+
+// A recording loaded from disk, held in memory for replay. Never persisted with
+// secrets — validateRecording strips any value from masked steps on the way in.
+let importedRecording = null;
+
+// Reproduce-only replay progress (scan replays reuse crawler.state instead).
+let replayState = { running: false, mode: null, log: [], summary: null, error: null };
+function rlog(msg) {
+  replayState.log.push({ t: new Date().toISOString(), msg });
+  if (replayState.log.length > 200) replayState.log.shift();
+}
+
 app.post("/record/start", async (req, res) => {
+  if (!page) return res.status(400).json({ ok: false, error: "No browser session. Open one first." });
   try {
     await recorder.start(page);
     audit.log("record.start", page.url());
@@ -113,12 +129,137 @@ app.post("/record/start", async (req, res) => {
 
 app.post("/record/stop", (_req, res) => {
   const entries = recorder.stop();
-  audit.log("record.stop", `${entries.length} pages`);
-  res.json({ ok: true, entries });
+  const recording = recorder.toJSON();
+  audit.log("record.stop", `${entries.length} checkpoints, ${recording.steps.length} actions`);
+  res.json({ ok: true, entries, steps: recording.steps.length, checkpoints: recording.checkpoints.length, recording });
 });
 
 app.get("/record/status", (_req, res) => {
-  res.json({ ok: true, active: recorder.state.active, entries: recorder.state.entries });
+  res.json({
+    ok: true,
+    active: recorder.state.active,
+    entries: recorder.state.entries,
+    steps: recorder.state.steps.length,
+  });
+});
+
+// Export the current recording as a downloadable JSON file (safe: no secrets).
+app.get("/record/export", (_req, res) => {
+  const rec = recorder.toJSON();
+  if (!rec.steps.length) return res.status(400).json({ ok: false, error: "Nothing recorded yet." });
+  audit.log("record.export", `${rec.steps.length} actions`);
+  res.json({ ok: true, recording: rec });
+});
+
+// Import a previously saved recording so it can be replayed on another machine
+// or in a later session. Rejects anything without our marker and defensively
+// strips any masked-field values that a hand-edited file might contain.
+app.post("/record/import", (req, res) => {
+  try {
+    const rec = validateRecording(req.body?.recording ?? req.body);
+    importedRecording = rec;
+    audit.log("record.import", `${rec.steps.length} actions, ${(rec.checkpoints || []).length} checkpoints`);
+    res.json({
+      ok: true,
+      startUrl: rec.startUrl,
+      origin: rec.origin,
+      steps: rec.steps.length,
+      checkpoints: (rec.checkpoints || []).length,
+      masked: rec.steps.filter((s) => s.masked).length,
+    });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e.message ?? e) });
+  }
+});
+
+// Replay. Two modes:
+//   scan=false  -> reproduce the path only (QA checks it still works).
+//   scan=true   -> drive to each checkpoint and run the full scan on that state,
+//                  including the AI audit + interaction pass, exactly like a
+//                  normal AI Full Scan but on states reached by real actions.
+// source: "imported" (default if present) or "current" (the just-recorded one).
+app.post("/record/replay/start", async (req, res) => {
+  if (!page) return res.status(400).json({ ok: false, error: "No browser session. Open one and log in first." });
+  if (replayState.running || crawler.state.running) {
+    return res.status(409).json({ ok: false, error: "A scan or replay is already running." });
+  }
+  const source = req.body?.source === "current" ? "current" : (importedRecording ? "imported" : "current");
+  const recording = source === "imported" ? importedRecording : recorder.toJSON();
+  if (!recording || !Array.isArray(recording.steps) || recording.steps.length === 0) {
+    return res.status(400).json({ ok: false, error: "No recording to replay. Record a path or import one first." });
+  }
+
+  // Safety: the session is authenticated against the currently open origin. If
+  // the recording was made against a different origin, refuse rather than driving
+  // recorded actions (possibly form submits) against the wrong host.
+  let pageOrigin = null;
+  try { pageOrigin = new URL(page.url()).origin; } catch { /* blank page */ }
+  if (recording.origin && pageOrigin && recording.origin !== pageOrigin && pageOrigin !== "null") {
+    return res.status(409).json({
+      ok: false,
+      error: `Recording was made on ${recording.origin} but the open session is on ${pageOrigin}. Open a session on the recording's origin first.`,
+    });
+  }
+
+  const scan = req.body?.scan !== false;
+  const replayer = createReplayer(recording, { onLog: (m) => (scan ? null : rlog(m)) });
+
+  if (!scan) {
+    // Reproduce-only: run every step, report where it breaks / where it's fragile.
+    replayState = { running: true, mode: "reproduce", log: [], summary: null, error: null };
+    audit.log("record.replay", `reproduce · ${recording.steps.length} actions`);
+    res.json({ ok: true, mode: "reproduce", steps: recording.steps.length });
+    try {
+      const summary = await replayAll(page, recording, { onLog: rlog });
+      replayState.summary = summary;
+    } catch (e) {
+      replayState.error = String(e.message ?? e);
+    } finally {
+      replayState.running = false;
+    }
+    return;
+  }
+
+  // Scan mode: hand the crawler a navigator that drives the recorded actions.
+  let ai;
+  try { ai = resolveAi(req.body?.ai); } catch (e) { return res.status(403).json({ ok: false, error: String(e.message ?? e) }); }
+  const aiAudit = req.body?.aiAudit === true;
+  if (aiAudit && !ai?.provider) {
+    return res.status(403).json({ ok: false, error: "AI replay scan needs an AI provider. Configure one in Settings first." });
+  }
+  const interact = !!req.body?.interact;
+  const allowMutations = interact && req.body?.allowMutations === true;
+
+  audit.log(
+    "record.replay",
+    `scan · ${replayer.checkpointCount} checkpoints${aiAudit ? " · AI-audit" : ""}` +
+    `${interact ? ` · interaction:${allowMutations ? "OPERATE" : "explore"}` : ""}`
+  );
+
+  crawler.start(page, {
+    ai, aiAudit, interact, allowMutations,
+    valueProfile: req.body?.valueProfile ?? null,
+    maxInteractions: req.body?.maxInteractions,
+    navigator: replayer.navigator,
+    checkpointCount: replayer.checkpointCount,
+  });
+  res.json({ ok: true, mode: "scan", checkpoints: replayer.checkpointCount, aiAudit });
+});
+
+app.get("/record/replay/status", (_req, res) => {
+  if (replayState.mode === "reproduce") {
+    res.json({
+      ok: true, mode: "reproduce", running: replayState.running,
+      log: replayState.log.slice(-20), summary: replayState.summary, error: replayState.error,
+    });
+  } else {
+    // scan replays report through the normal crawler status
+    const s = crawler.state;
+    res.json({
+      ok: true, mode: "scan", running: s.running, currentUrl: s.currentUrl,
+      pages: s.pagesScanned, log: s.log.slice(-12), error: s.error, result: s.result,
+    });
+  }
 });
 
 app.post("/scan/quick", async (req, res) => {
@@ -1051,15 +1192,11 @@ function securityConfig() {
 function resolveAi(reqAi) {
   const stored = settings.get("ai");
   const provider = reqAi?.provider || stored?.provider;
-  const { model, baseUrl } = resolveProviderFields(provider, {
-    model: reqAi?.model,
-    baseUrl: reqAi?.baseUrl,
-    stored,
-  });
+  const defaults = AI_PROVIDER_DEFAULTS[provider] ?? {};
   const ai = {
     provider,
-    model,
-    baseUrl,
+    model: reqAi?.model || stored?.model || defaults.model,
+    baseUrl: reqAi?.baseUrl || stored?.baseUrl || defaults.baseUrl,
     apiKey: stored?.apiKeyEnc ? decrypt(stored.apiKeyEnc) : reqAi?.apiKey,
   };
   assertProviderAllowed(ai.provider, securityConfig().localOnly);
@@ -1073,15 +1210,11 @@ function resolveAiB(reqAi) {
   const stored = settings.get("aiB");
   const provider = reqAi?.provider || stored?.provider;
   if (!provider) return null;
-  const { model, baseUrl } = resolveProviderFields(provider, {
-    model: reqAi?.model,
-    baseUrl: reqAi?.baseUrl,
-    stored,
-  });
+  const defaults = AI_PROVIDER_DEFAULTS[provider] ?? {};
   const ai = {
     provider,
-    model,
-    baseUrl,
+    model: reqAi?.model || stored?.model || defaults.model,
+    baseUrl: reqAi?.baseUrl || stored?.baseUrl || defaults.baseUrl,
     apiKey: stored?.apiKeyEnc ? decrypt(stored.apiKeyEnc) : reqAi?.apiKey,
   };
   assertProviderAllowed(ai.provider, securityConfig().localOnly);
@@ -1120,12 +1253,7 @@ app.post("/settings/ai/test", async (req, res) => {
   const started = Date.now();
   try {
     const ai = resolveAi(req.body ?? {});
-    const reply = await aiChat(
-      ai,
-      'Reply with exactly the word "OK" and nothing else.',
-      16,
-      { test: true, timeoutMs: 90_000 },
-    );
+    const reply = await aiChat(ai, 'Reply with exactly the word "OK" and nothing else.', 10);
     audit.log("settings.ai.test", `${ai.provider}/${ai.model} ok`);
     res.json({
       ok: true,
