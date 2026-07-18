@@ -175,3 +175,90 @@ export async function installHighlighter(page) {
     { fnSrc: highlightInPage.toString(), clearSrc: clearHighlightsInPage.toString() }
   );
 }
+
+// Full-page visual evidence.
+//
+// The cropped shots above show a failing element up close but lose the page
+// context — you can't tell WHERE on the page the issue sits. This captures ONE
+// full-page screenshot per page (not per element, so a 200-issue page stays
+// small) plus each failing element's bounding box in full-page CSS coordinates.
+// The report draws the "issue square" as an HTML overlay on the shared image, so
+// the bytes are stored once per page and every finding on that page reuses them.
+//
+// Boxes are captured as data (not baked into the pixels) because position:fixed
+// markers render at the wrong place in a full-page screenshot — an overlay in the
+// report is both accurate and lets us store the image once.
+export async function captureFullPageAnnotated(page, violations, opts = {}) {
+  const maxPerRule = opts.maxPerRule ?? 3;
+  const maxTotal = opts.maxTotal ?? 30;
+  const quality = opts.quality ?? 55;
+
+  let pageShot = null;
+  let pageW = 0;
+  let pageH = 0;
+  try {
+    const dims = await page.evaluate(() => ({
+      w: Math.max(document.documentElement.scrollWidth, document.documentElement.clientWidth),
+      h: Math.max(document.documentElement.scrollHeight, document.documentElement.clientHeight),
+    }));
+    pageW = dims.w;
+    pageH = dims.h;
+    // scale:'css' captures at CSS-pixel resolution (not 2x retina), so image
+    // pixels line up 1:1 with the boxes below and the file stays ~4x smaller.
+    const buf = await page.screenshot({ type: "jpeg", quality, fullPage: true, scale: "css" });
+    pageShot = buf.toString("base64");
+  } catch {
+    pageShot = null; // findings still returned, just without the visual
+  }
+
+  let taken = 0;
+  let notFound = 0;
+  let budget = 0;
+  const out = [];
+
+  for (const v of violations) {
+    const nodes = [];
+    for (let i = 0; i < v.nodes.length; i++) {
+      const node = v.nodes[i];
+      if (taken >= maxTotal || i >= maxPerRule) {
+        budget++;
+        nodes.push({ ...node, box: null, boxSkipped: "budget" });
+        continue;
+      }
+      let box = null;
+      try {
+        box = await page.evaluate((sel) => {
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          const r = el.getBoundingClientRect();
+          if (r.width === 0 && r.height === 0) return null;
+          return {
+            x: Math.round(r.left + window.scrollX),
+            y: Math.round(r.top + window.scrollY),
+            w: Math.round(r.width),
+            h: Math.round(r.height),
+            tiny: r.width < 4 || r.height < 4,
+          };
+        }, node.target);
+      } catch {
+        box = null;
+      }
+      if (!box) {
+        notFound++;
+        nodes.push({ ...node, box: null, boxSkipped: "not-found" });
+        continue;
+      }
+      taken++;
+      nodes.push({ ...node, box, elementTiny: !!box.tiny });
+    }
+    out.push({ ...v, nodes });
+  }
+
+  return {
+    violations: out,
+    pageShot,
+    pageW,
+    pageH,
+    stats: { taken, notFound, budget, maxPerRule, maxTotal },
+  };
+}

@@ -584,7 +584,7 @@ app.post("/report/site", async (req, res) => {
       }
     }
 
-    const files = buildSiteReport(dedup, summary, { generatedAt: new Date().toISOString() });
+    const files = buildSiteReport(dedup, summary, { generatedAt: new Date().toISOString() }, scan.pageShots ?? {});
 
     const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
     const dir = join(EXPORT_DIR, `a11y-report-${stamp}`);

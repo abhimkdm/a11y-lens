@@ -95,6 +95,18 @@ export interface ScanResult {
   pages?: { url: string; title: string; score: number; violationRuleCount: number }[];
   aiReport?: AiReport;
   expertAudit?: ExpertAudit;
+  // Set when the scan itself was an AI Full Scan (the per-page AI expert audit).
+  // This is a SEPARATE spend from aiReport (Generate AI Report), and both must be
+  // counted in the AI usage/cost report.
+  usage?: AiUsage;
+  cost?: AiCost;
+  aiAudit?: {
+    pagesAudited: number;
+    statesAudited?: number;
+    provider: string;
+    findingsRaw?: number;
+    groupCount?: number | null;
+  };
 }
 
 interface AppState {

@@ -364,6 +364,14 @@ export default function ScanCenter() {
     else if (!r.ok) setError(r.error ?? "Keyboard audit failed");
   };
 
+  // True when the loaded scan came from an AI Full Scan — the model already
+  // reviewed every page, so a separate "Generate AI Report" pass would re-spend
+  // tokens on the same judgement. Detected from the audit metadata the crawler
+  // attaches, with a token-count fallback for older sessions.
+  const aiAlreadyAudited =
+    !!currentScan?.aiAudit ||
+    ((currentScan?.usage?.inputTokens ?? 0) + (currentScan?.usage?.outputTokens ?? 0)) > 0;
+
   return (
     <Stack spacing={2.5}>
       <BrowserSetup />
@@ -644,13 +652,43 @@ export default function ScanCenter() {
                   </Button>
                 </>
               )}
-              <Button variant="contained" color="secondary" startIcon={<AutoAwesomeIcon />}
-                      onClick={genReport} disabled={reportBusy}>
-                {reportBusy ? "Generating…" : "Generate AI Report"}
-              </Button>
+              {/* AI spend discipline: an AI Full Scan has ALREADY had the model
+                  review every page, so generating a second AI report on top of it
+                  is duplicate spend for the same judgement. Offer the button only
+                  after a non-AI scan; if a report already exists, make regenerating
+                  an explicit choice rather than a one-click accident. */}
+              <Tooltip
+                title={
+                  aiAlreadyAudited
+                    ? "This was an AI Full Scan — the model already reviewed every page, and those findings are in the report. Generating another AI report would spend tokens on the same judgement."
+                    : currentScan.aiReport
+                      ? "An AI report already exists for this scan. Regenerating costs another request."
+                      : "Have the AI synthesise these automated findings into a report."
+                }
+              >
+                <span>
+                  <Button variant="contained" color="secondary" startIcon={<AutoAwesomeIcon />}
+                          onClick={genReport} disabled={reportBusy || aiAlreadyAudited}>
+                    {reportBusy ? "Generating…" : currentScan.aiReport ? "Regenerate AI Report" : "Generate AI Report"}
+                  </Button>
+                </span>
+              </Tooltip>
             </Stack>
           </Stack>
           {overlayMsg && <Alert severity="success" sx={{ mb: 2 }}>{overlayMsg}</Alert>}
+          {reportBusy && (
+            <Box sx={{ mb: 2 }}>
+              <AgentActivityPanel
+                mode="report"
+                pages={currentScan.pages?.length ?? 0}
+                logs={[]}
+                currentUrl={null}
+                aiAudit
+                interact={false}
+                total={null}
+              />
+            </Box>
+          )}
           {currentScan.pages && (
             <Paper variant="outlined" sx={{ mb: 2, p: 2, bgcolor: "#0E1116" }}>
               <Typography variant="overline">Pages scanned · {currentScan.pages.length}</Typography>

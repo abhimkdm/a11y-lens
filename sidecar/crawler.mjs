@@ -14,7 +14,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { aiChat } from "./ai.mjs";
-import { captureElementScreenshots, installHighlighter } from "./element-shots.mjs";
+import { captureElementScreenshots, captureFullPageAnnotated, installHighlighter } from "./element-shots.mjs";
 import { captureKeyboardEvidence } from "./keyboard-evidence.mjs";
 import { exploreInteractions } from "./interact.mjs";
 import { auditPageAi } from "./ai-audit.mjs";
@@ -125,12 +125,19 @@ export function createCrawler() {
       })),
     }));
 
-    // Visual evidence per element. Capped harder than a quick scan — a 10-page
-    // crawl at 40 shots/page would be both slow and enormous.
+    // Visual evidence: ONE full-page screenshot per page, plus each failing
+    // element's box (drawn as an overlay in the report). Storing the image once
+    // per page keeps a big crawl's payload sane; the boxes are tiny.
     if (opts.elementScreenshots !== false) {
       try {
-        await installHighlighter(page);
-        const r = await captureElementScreenshots(page, violations, { maxPerRule: 2, maxTotal: 10 });
+        const r = await captureFullPageAnnotated(page, violations, { maxPerRule: 3, maxTotal: 30 });
+        if (r.pageShot) {
+          // Held until recordScan() names the row. Interaction states share the
+          // page's URL, so the key can't be the URL — it must be the scan row
+          // (e.g. "Checkout — Interaction: SaldoMax limit"), or every revealed
+          // state would overwrite the base page's screenshot.
+          state.__pendingShot = { shot: r.pageShot, w: r.pageW, h: r.pageH };
+        }
         return r.violations;
       } catch {
         return violations;   // never lose a page's findings over a screenshot
@@ -154,18 +161,40 @@ export function createCrawler() {
     state.running = true;
     state.startedAt = new Date().toISOString();
     state.pagesScanned = [];
+    state.pageShots = {};   // pathname+search -> { shot(base64), w, h } (one full-page shot per page)
     state.log = [];
     state.error = null;
     state.result = null;
 
     function recordScan(url, title, violations, keyboard = null) {
       const u = new URL(url);
-      for (const v of violations) {
+      // One screenshot per scan row (page or interaction-revealed state), named by
+      // the row so a drawer's state doesn't overwrite the base page's image.
+      const shotKey = `${u.pathname}${u.search}||${title || ""}`;
+      if (state.__pendingShot) {
+        state.pageShots[shotKey] = state.__pendingShot;
+        state.__pendingShot = null;
+      }
+      // Stamp every node with its row + a callout number, so the report can draw
+      // numbered red boxes on that row's screenshot.
+      let callout = 0;
+      const annotated = violations.map((v) => ({
+        ...v,
+        nodes: (v.nodes ?? []).map((n) => ({
+          ...n,
+          page: u.pathname,
+          shotKey,
+          shotTitle: title || u.pathname,
+          callout: n.box ? ++callout : undefined,
+        })),
+      }));
+      for (const v of annotated) {
         const cur = merged.get(v.id) ?? { ...v, nodes: [] };
         for (const n of v.nodes)
-          cur.nodes.push({ ...n, page: u.pathname, failureSummary: `[${u.pathname}] ${n.failureSummary ?? ""}` });
+          cur.nodes.push({ ...n, failureSummary: `[${u.pathname}] ${n.failureSummary ?? ""}` });
         merged.set(v.id, cur);
       }
+      violations = annotated;
       const counts = { critical: 0, serious: 0, moderate: 0, minor: 0 };
       for (const v of violations) counts[v.impact] += v.nodes.length;
       const w = { critical: 10, serious: 5, moderate: 2, minor: 1 };
@@ -424,6 +453,7 @@ export function createCrawler() {
         url: origin, title: `Full scan · ${state.pagesScanned.length} pages`,
         timestamp: new Date().toISOString(), score: avg, counts, violations,
         pages: state.pagesScanned,
+        pageShots: state.pageShots,   // pathname+search -> { shot, w, h }
       };
       // When AI Full Scan ran, attach the token usage + priced cost across every
       // page it audited, so the AI cost report can bill the whole crawl as one job.
@@ -459,7 +489,9 @@ export function createCrawler() {
         state.result.aiAudit = {
           pagesAudited: state.aiAuditPages,
           statesAudited: state.aiAuditStates,
-          provider: `${state.aiProviderModel.provider}/${state.aiProviderModel.model}`,
+          provider: state.aiProviderModel.model.startsWith(`${state.aiProviderModel.provider}/`)
+            ? state.aiProviderModel.model                      // model already namespaced (e.g. "nvidia/nemotron-…")
+            : `${state.aiProviderModel.provider}/${state.aiProviderModel.model}`,
           findingsRaw: aiFindings.length,
           groups: aiGroups,
           groupCount: aiGroups ? aiGroups.length : null,

@@ -20,15 +20,50 @@ const fmtUsd = (usd: number) => `$${usd.toFixed(4)}`;
 
 export function buildAiUsageReport(s: ScanResult): string {
   const ai = s.aiReport;
-  const usage = ai?.usage ?? { inputTokens: 0, outputTokens: 0 };
-  const cost = ai?.cost;
-  const totalTokens = usage.inputTokens + usage.outputTokens;
-  const hasAi = !!ai && (totalTokens > 0 || (ai.fixes?.length ?? 0) > 0);
-  const noUsage = !ai || totalTokens === 0;
 
-  const provider = ai?.provider ?? "—";
+  // TWO separate AI spends can exist on one session and BOTH must be counted:
+  //   1. AI Full Scan  — the per-page/per-state expert audit run during the scan
+  //                      (crawler stores it top-level as s.usage / s.cost / s.aiAudit)
+  //   2. AI report     — the single "Generate AI Report" synthesis pass (s.aiReport)
+  // Previously only #2 was reported, so an AI Full Scan's spend was invisible.
+  const auditUsage = s.usage ?? { inputTokens: 0, outputTokens: 0 };
+  const auditTotal = auditUsage.inputTokens + auditUsage.outputTokens;
+  const auditCost = s.cost;
+  const audit = s.aiAudit;
+  const hasAudit = auditTotal > 0 || !!audit;
+
+  const reportUsage = ai?.usage ?? { inputTokens: 0, outputTokens: 0 };
+  const reportTotal = reportUsage.inputTokens + reportUsage.outputTokens;
+  const reportCost = ai?.cost;
+  const hasReport = !!ai;
+
+  const usage = {
+    inputTokens: auditUsage.inputTokens + reportUsage.inputTokens,
+    outputTokens: auditUsage.outputTokens + reportUsage.outputTokens,
+  };
+  const totalTokens = usage.inputTokens + usage.outputTokens;
+
+  // Combined cost. If either side is unpriced (null) we can only report the
+  // priced portion, and we say so rather than silently under-reporting.
+  const anyUnpriced =
+    (hasAudit && auditCost?.usd === null) || (hasReport && reportCost?.usd === null);
+  const summedUsd = (auditCost?.usd ?? 0) + (reportCost?.usd ?? 0);
+  const cost = (auditCost || reportCost)
+    ? {
+        usd: anyUnpriced && summedUsd === 0 ? null : summedUsd,
+        note: anyUnpriced ? "Part of this run used a model with no local price — the unpriced portion is excluded." : (auditCost?.note ?? reportCost?.note),
+        pricedAs: auditCost?.pricedAs ?? reportCost?.pricedAs,
+      }
+    : undefined;
+
+  const hasAi = hasAudit || hasReport;
+  const noUsage = totalTokens === 0;
+
+  const provider = audit?.provider ?? ai?.provider ?? "—";
   const scenarios = ai?.evidence?.scenarios ?? (s.pages?.length || 1);
   const imagesUsed = ai?.evidence?.imagesUsed ?? 0;
+  const pagesAudited = audit?.pagesAudited ?? 0;
+  const statesAudited = audit?.statesAudited ?? 0;
 
   const costHeadline =
     !cost ? "—"
@@ -37,7 +72,7 @@ export function buildAiUsageReport(s: ScanResult): string {
           : fmtUsd(cost.usd);
 
   const costSub =
-    !cost ? "No AI report was generated for this scan."
+    !cost ? "No AI ran on this scan."
       : cost.usd === null ? (cost.note ?? "This model has no local price — tokens are shown, cost is unknown.")
         : cost.usd === 0 ? (cost.note?.includes("local") ? "Local model — no API cost." : "No billable tokens.")
           : cost.pricedAs ? `Priced using published rates for ${esc(cost.pricedAs)}.` : "Estimated from published per-token rates.";
@@ -77,20 +112,23 @@ tfoot td{font-weight:700;border-top:1px solid #9aa7b44d;border-bottom:none}
   <div class="muted">${esc(s.title || s.url)}</div>
   <div class="meta">
     <span class="chip">${esc(provider)}</span>
-    <span class="chip">${scenarios} scenario${scenarios === 1 ? "" : "s"} scanned</span>
-    <span class="chip">${imagesUsed} image${imagesUsed === 1 ? "" : "s"} sent</span>
+    ${hasAudit ? `<span class="chip">AI Full Scan · ${pagesAudited} page${pagesAudited === 1 ? "" : "s"}${statesAudited ? ` + ${statesAudited} state${statesAudited === 1 ? "" : "s"}` : ""}</span>` : ""}
+    ${hasReport ? `<span class="chip">AI report · ${scenarios} scenario${scenarios === 1 ? "" : "s"}</span>` : ""}
+    ${imagesUsed ? `<span class="chip">${imagesUsed} image${imagesUsed === 1 ? "" : "s"} sent</span>` : ""}
     <span class="muted">${ai?.generatedAt ? new Date(ai.generatedAt).toLocaleString() : new Date(s.timestamp).toLocaleString()}</span>
   </div>
 </div>
 
-<p class="muted">Token consumption and estimated API cost for generating the AI accessibility
-report on this scan. Pricing is a local estimate from published per-model rates and can drift
-from your actual invoice — treat it as directionally accurate, not a bill.</p>
+<p class="muted">Token consumption and estimated API cost for every AI pass run against this
+scan — the AI Full Scan expert audit and/or the generated AI report. Pricing is a local
+estimate from published per-model rates and can drift from your actual invoice — treat it as
+directionally accurate, not a bill.</p>
 
-${noUsage && !hasAi ? `<div class="banner"><strong>No AI report was generated for this scan.</strong>
-There is no model usage or cost to report. Generate an AI report first, then export this document.</div>` : ""}
+${!hasAi ? `<div class="banner"><strong>No AI ran on this scan.</strong>
+This was an automated-only scan, so there is no model usage or cost to report. Run an AI Full Scan
+or generate an AI report to produce billable usage.</div>` : ""}
 ${noUsage && hasAi ? `<div class="banner"><strong>Token usage was not reported by the provider.</strong>
-An AI report exists, but this provider returned no token counts, so consumption and cost can't be shown.</div>` : ""}
+An AI pass ran, but this provider returned no token counts, so consumption and cost can't be shown.</div>` : ""}
 
 <div class="cards">
   <div class="card"><div class="n">${fmt(usage.inputTokens)}</div><div class="l">Input tokens</div></div>
@@ -106,21 +144,27 @@ An AI report exists, but this provider returned no token counts, so consumption 
 <table>
   <thead><tr><th>Item</th><th class="num">Input</th><th class="num">Output</th><th class="num">Total</th></tr></thead>
   <tbody>
-    <tr><td>AI report generation${scenarios > 1 ? ` (${scenarios} scenarios, one request)` : ""}</td>
-      <td class="num">${fmt(usage.inputTokens)}</td>
-      <td class="num">${fmt(usage.outputTokens)}</td>
-      <td class="num">${fmt(totalTokens)}</td></tr>
+    ${hasAudit ? `<tr><td>AI Full Scan — per-page expert audit${pagesAudited ? ` (${pagesAudited} page${pagesAudited === 1 ? "" : "s"}${statesAudited ? ` + ${statesAudited} revealed state${statesAudited === 1 ? "" : "s"}` : ""})` : ""}</td>
+      <td class="num">${fmt(auditUsage.inputTokens)}</td>
+      <td class="num">${fmt(auditUsage.outputTokens)}</td>
+      <td class="num">${fmt(auditTotal)}</td></tr>` : ""}
+    ${hasReport ? `<tr><td>AI report generation${scenarios > 1 ? ` (${scenarios} scenarios, one request)` : ""}</td>
+      <td class="num">${fmt(reportUsage.inputTokens)}</td>
+      <td class="num">${fmt(reportUsage.outputTokens)}</td>
+      <td class="num">${fmt(reportTotal)}</td></tr>` : ""}
+    ${!hasAudit && !hasReport ? `<tr><td class="muted">No AI passes ran on this scan.</td><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>` : ""}
   </tbody>
   <tfoot><tr><td>Total</td><td class="num">${fmt(usage.inputTokens)}</td>
     <td class="num">${fmt(usage.outputTokens)}</td><td class="num">${fmt(totalTokens)}</td></tr></tfoot>
 </table>
 
 <h2>What this covers</h2>
-<p class="muted">This figure is for the AI <em>report generation</em> pass only — the automated
-axe-core scan, the keyboard/focus probes, and the measured checks run locally and cost nothing.
-A single AI report is one request even when it reasons over ${scenarios} scanned
-scenario${scenarios === 1 ? "" : "s"}, so cost scales with page complexity and screenshot count,
-not linearly with pages.</p>
+<p class="muted">Two AI passes can bill against one scan and both are included above.
+The <strong>AI Full Scan</strong> audit runs the model once per page (and once per
+interaction-revealed state), so its cost scales with the size of the crawl. The
+<strong>AI report</strong> is a single synthesis request over everything found, so it
+costs roughly the same whether it reasons over 5 pages or 50. The axe-core scan, the
+keyboard/focus probes, and all measured checks run locally and cost nothing.</p>
 
 <div class="foot">Generated by A11y Lens · ${new Date().toLocaleString()} ·
 Prices are a local estimate using published per-1M-token rates, not pulled from your provider's

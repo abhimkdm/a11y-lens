@@ -54,6 +54,16 @@ export function codeExampleFor(id = "", rule = "") {
   return CODE[id] || CODE[rule] || "";
 }
 
+// "AI" when the finding came from a model's judgement (the AI expert audit),
+// "Automated" when it was produced deterministically (axe-core, a measured
+// interaction probe, or the replay selector check). Lets the report show, per
+// finding, whether a human should sanity-check it (AI) or trust it outright.
+export function generatedBy(f) {
+  const s = String(f?.source || "").toLowerCase();
+  if (s === "ai-audit" || s === "ai" || s === "expert-ai" || s === "expert") return "AI";
+  return "Automated";
+}
+
 // Map a raw finding to the flat block. Accepts findings from any source.
 export function toBlock(f) {
   const wcag = f.wcagString || (Array.isArray(f.wcag) ? f.wcag[0] : f.wcag) || "";

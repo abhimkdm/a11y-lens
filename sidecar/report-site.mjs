@@ -65,6 +65,7 @@ export function deduplicate(pages) {
           recommendation: v.recommendation || v.help || "",
           evidence: v.evidence || (Array.isArray(v.nodes) && v.nodes[0] && (v.nodes[0].html || v.nodes[0].target)) || "",
           codeExample: v.codeExample || codeExampleFor(v.id, v.rule),
+          source: v.source || "",
           pages: new Map(),
         });
       }
@@ -84,11 +85,11 @@ export function deduplicate(pages) {
       affected.length >= SITEWIDE_MIN_PAGES &&
       affected.length / pageCount >= SITEWIDE_RATIO;
 
-    // Take the richest sample nodes (ones that actually have a screenshot first),
-    // so the reader sees evidence rather than the first arbitrary match.
+    // Take the richest sample nodes (ones that have a located box first), so the
+    // reader sees the issue squared on the page rather than the first arbitrary match.
     const allNodes = [...entry.pages.values()].flat();
     const samples = [...allNodes]
-      .sort((a, b) => (b.screenshot ? 1 : 0) - (a.screenshot ? 1 : 0))
+      .sort((a, b) => (b.box ? 1 : 0) - (a.box ? 1 : 0))
       .slice(0, 6);
 
     const base = {
@@ -101,6 +102,7 @@ export function deduplicate(pages) {
       recommendation: entry.recommendation,
       evidence: entry.evidence,
       codeExample: entry.codeExample,
+      source: entry.source,
       occurrences,
       affectedPages: affected,
       nodes: samples,

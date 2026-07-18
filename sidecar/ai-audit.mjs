@@ -92,7 +92,7 @@ HARD RULES
 - Be specific. "Improve labels" is useless — cite the element and the actual problem.
 - The fix field is read by a developer who implements it. Write a concrete code-level instruction, not a WCAG paraphrase. Bad: "Provide an accessible name." Good: "Add aria-label=\\"Close dialog\\" to the <button class=\\"close\\">, or wrap the SVG in <span class=\\"sr-only\\">Close dialog</span>."
 - Output STRICT JSON, exactly this shape and nothing else — a top-level "findings" array of flat objects, plus a "passes" array:
-  { "findings": [ { "severity": "critical|serious|moderate|minor", "wcag": "2.4.3", "description": "...", "evidence": "...", "recommendation": "...", "codeExample": "..." } ], "passes": [ { "message": "..." } ] }
+  { "findings": [ { "severity": "critical|serious|moderate|minor", "wcag": "2.4.3", "description": "...", "evidence": "...", "recommendation": "...", "codeExample": "...", "selector": "..." } ], "passes": [ { "message": "..." } ] }
   FIELD RULES:
   - severity: one of critical | serious | moderate | minor.
   - wcag: the single MOST specific criterion number as a string (e.g. "4.1.2"). Not a level, not an array.
@@ -100,6 +100,7 @@ HARD RULES
   - evidence: a REAL verbatim string from the DOM, accessibility tree, screenshot text, or keyboard trace. No paraphrasing, no invented quotes. This is the only field where foreign-language quotes belong.
   - recommendation: plain-language what to change.
   - codeExample: a concrete code snippet a developer can paste or adapt. Not a WCAG paraphrase. Bad: "Provide an accessible name." Good: \`<button class="close" aria-label="Close dialog">…</button>\`.
+  - selector: a CSS selector that uniquely matches the ONE failing element in the DOM above, so the report can outline it on a screenshot. Copy real attributes from the DOM you were given — id, name, class, type, aria-label, data-* — e.g. \`input[name="hasLimits"][value="NO_LIMIT"]\`, \`#search\`, \`button.close[aria-label="Luk"]\`. Prefer the most specific selector that still matches. NEVER return a URL, a page path, an XPath, or a guess at a class that does not appear in the DOM above. If you truly cannot identify the element, return "".
   Only report issues with STRONG evidence. No prose outside the JSON.`;
 
 const SKIP_CHROME = `
@@ -129,8 +130,9 @@ const AUDIT_SCHEMA = {
           evidence: { type: "string" },
           recommendation: { type: "string" },
           codeExample: { type: "string" },
+          selector: { type: "string" },
         },
-        required: ["severity", "wcag", "description", "evidence", "recommendation"],
+        required: ["severity", "wcag", "description", "evidence", "recommendation", "selector"],
       },
     },
     passes: {
@@ -285,13 +287,54 @@ export async function auditPageAi(page, ai, {
         wcag: wcagStr ? [wcagStr] : [],     // array, as other findings use
         source: "ai-audit",
         evidenceStatus: "reported",
-        nodes: [{ target: url, html: "", failureSummary: [rec, code].filter(Boolean).join(" — ") }],
+        selector: String(f.selector || "").trim(),
+        nodes: [{
+          target: String(f.selector || "").trim() || url,
+          html: "",
+          failureSummary: [rec, code].filter(Boolean).join(" — "),
+        }],
       };
     });
 
   const passes = (Array.isArray(data.passes) ? data.passes : [])
     .map((p) => ({ message: p.message }))
     .filter((p) => p.message);
+
+  // Resolve each finding's selector on the LIVE page into a bounding box + the
+  // element's real HTML. Without this an AI finding has nothing to outline, which
+  // is why AI cards showed an empty "failing elements" box and no screenshot.
+  // Done here because this is the only moment the audited state is still open —
+  // an interaction-revealed drawer is gone by the time the report is built.
+  for (const f of findings) {
+    const sel = f.selector;
+    if (!sel) continue;
+    try {
+      const found = await page.evaluate((s) => {
+        let el = null;
+        try { el = document.querySelector(s); } catch { return null; }
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) return null;
+        return {
+          box: {
+            x: Math.round(r.left + window.scrollX),
+            y: Math.round(r.top + window.scrollY),
+            w: Math.round(r.width),
+            h: Math.round(r.height),
+          },
+          html: el.outerHTML.slice(0, 400),
+        };
+      }, sel);
+      if (found) {
+        f.nodes[0].box = found.box;
+        f.nodes[0].html = found.html;
+      } else {
+        f.nodes[0].boxSkipped = "not-found";
+      }
+    } catch {
+      f.nodes[0].boxSkipped = "not-found";
+    }
+  }
 
   const cost = estimateCost({ provider: ai.provider, model: ai.model, inputTokens: usage.inputTokens, outputTokens: usage.outputTokens });
 

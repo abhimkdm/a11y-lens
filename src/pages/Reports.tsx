@@ -132,8 +132,14 @@ export default function Reports() {
     setError(""); setSaved("");
     const r = await api.getSession(row.id).catch(() => null);
     if (!r?.ok) { setError("Could not load session. Is the sidecar running?"); return; }
-    if (kind === "ai-usage" && !r.scan.aiReport) {
-      setError("This session has no AI report, so there's no AI usage or cost to export. Open the scan and generate an AI report first.");
+    // Either AI pass produces billable usage: the AI Full Scan expert audit
+    // (top-level usage/aiAudit) or the generated AI report.
+    const hasAnyAi =
+      !!r.scan.aiReport ||
+      !!r.scan.aiAudit ||
+      ((r.scan.usage?.inputTokens ?? 0) + (r.scan.usage?.outputTokens ?? 0)) > 0;
+    if (kind === "ai-usage" && !hasAnyAi) {
+      setError("No AI ran on this session, so there's no usage or cost to export. Run an AI Full Scan, or open the scan and generate an AI report.");
       return;
     }
     const base = `a11y-lens_${row.timestamp.slice(0, 19).replace(/[:T]/g, "-")}`;
@@ -234,7 +240,7 @@ export default function Reports() {
                       onClick={() => exportSession(row, "html")}>HTML</Button>
               <Button size="small" variant="outlined" startIcon={<DataObjectIcon />}
                       onClick={() => exportSession(row, "session")}>Session</Button>
-              <Tooltip title="Management-facing report: model used, token consumption, and estimated AI cost. Requires an AI report on this session.">
+              <Tooltip title="Management-facing report: model used, token consumption, and estimated AI cost across both AI passes (AI Full Scan audit and generated AI report).">
                 <Button size="small" variant="outlined" startIcon={<PaidOutlinedIcon />}
                         onClick={() => exportSession(row, "ai-usage")}>AI cost</Button>
               </Tooltip>

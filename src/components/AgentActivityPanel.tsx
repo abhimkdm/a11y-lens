@@ -4,6 +4,8 @@ import VerifiedUserIcon from "@mui/icons-material/VerifiedUser";
 import TouchAppIcon from "@mui/icons-material/TouchApp";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import LayersIcon from "@mui/icons-material/Layers";
+import DescriptionIcon from "@mui/icons-material/Description";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 // Live "agents at work" panel shown during a Full / AI Full scan. It is driven
@@ -13,7 +15,7 @@ import type { ReactNode } from "react";
 
 type Log = { msg: string };
 
-type AgentKey = "crawler" | "axe" | "interact" | "reviewer" | "dedupe";
+type AgentKey = "crawler" | "axe" | "interact" | "reviewer" | "dedupe" | "report";
 
 const AGENTS: { key: AgentKey; label: string; color: string; icon: ReactNode; re: RegExp }[] = [
   { key: "crawler",  label: "Crawler",     color: "#38bdf8", icon: <TravelExploreIcon fontSize="small" />, re: /scanning:|exploring|navigat|checkpoint|page \d/i },
@@ -21,6 +23,7 @@ const AGENTS: { key: AgentKey; label: string; color: string; icon: ReactNode; re
   { key: "interact", label: "Interaction", color: "#fbbf24", icon: <TouchAppIcon fontSize="small" />,      re: /interaction pass|found \d+ candidate|could not activate|interaction:|operate gear|opening/i },
   { key: "reviewer", label: "AI Reviewer", color: "#a78bfa", icon: <VisibilityIcon fontSize="small" />,    re: /ai audit|ai review|ai expert|auditing/i },
   { key: "dedupe",   label: "Dedupe",      color: "#fb7185", icon: <LayersIcon fontSize="small" />,        re: /dedup|grouping|merg(e|ing) finding|clustered/i },
+  { key: "report",   label: "Report Writer", color: "#34d399", icon: <DescriptionIcon fontSize="small" />, re: /report|summar|writing/i },
 ];
 
 // Strip terminal colour codes that leak into log lines (…Call log: ␛[2m - waiting).
@@ -42,7 +45,7 @@ function spotlight(logs: Log[]): AgentKey | null {
 }
 
 export default function AgentActivityPanel({
-  pages, logs, currentUrl, aiAudit, interact, total,
+  pages, logs, currentUrl, aiAudit, interact, total, mode = "scan",
 }: {
   pages: number;
   logs: Log[];
@@ -50,16 +53,33 @@ export default function AgentActivityPanel({
   aiAudit: boolean;
   interact: boolean;
   total?: number | null;
+  mode?: "scan" | "report";
 }) {
+  // Report generation is a SINGLE long request with no progress feed, so there
+  // is nothing honest to animate step-by-step. Show which agents are involved,
+  // pulse the one actually working, and prove liveness with an elapsed timer
+  // rather than inventing fake progress.
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (mode !== "report") return;
+    setElapsed(0);
+    const t = window.setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [mode]);
+
   // Which agents are actually part of THIS run.
   const enabled = new Set<AgentKey>(["crawler", "axe"]);
   if (interact) enabled.add("interact");
   if (aiAudit) { enabled.add("reviewer"); enabled.add("dedupe"); }
-  const shown = AGENTS.filter((a) => enabled.has(a.key));
+  const shown = mode === "report"
+    ? AGENTS.filter((a) => a.key === "reviewer" || a.key === "dedupe" || a.key === "report")
+    : AGENTS.filter((a) => enabled.has(a.key));
 
-  const active = spotlight(logs) ?? "axe"; // page-scan is the baseline activity
-  const latest = logs.length ? clean(logs[logs.length - 1].msg) : "Starting…";
-  const determinate = typeof total === "number" && total > 0;
+  const active: AgentKey = mode === "report" ? "report" : (spotlight(logs) ?? "axe");
+  const latest = mode === "report"
+    ? "Synthesising findings into a report — one request, no intermediate progress."
+    : logs.length ? clean(logs[logs.length - 1].msg) : "Starting…";
+  const determinate = mode !== "report" && typeof total === "number" && total > 0;
   const pct = determinate ? Math.min(100, Math.round((pages / (total as number)) * 100)) : 0;
 
   return (
@@ -83,7 +103,7 @@ export default function AgentActivityPanel({
       }}
     >
       <Typography variant="overline" sx={{ color: "text.secondary", letterSpacing: 2 }}>
-        Agents at work
+        {mode === "report" ? "Generating AI report" : "Agents at work"}
       </Typography>
 
       {/* agent constellation. NOTE: overflowX:auto also clips the Y axis, so the
@@ -145,7 +165,9 @@ export default function AgentActivityPanel({
       <Box sx={{ mt: 1.5 }}>
         <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.5 }}>
           <Typography variant="caption" color="text.secondary">
-            {determinate ? `${pages} / ${total} checkpoints scanned` : `${pages} page${pages === 1 ? "" : "s"} scanned`}
+            {mode === "report"
+              ? `Working — ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")} elapsed`
+              : determinate ? `${pages} / ${total} checkpoints scanned` : `${pages} page${pages === 1 ? "" : "s"} scanned`}
           </Typography>
           {determinate && <Typography variant="caption" color="text.secondary">{pct}%</Typography>}
         </Stack>

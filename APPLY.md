@@ -1,55 +1,42 @@
-# A11y Lens — stop re-scanning identical controls + uniform report blocks
+# A11y Lens — screenshots with RED outlined callouts actually appear
 
-Two changes. All sidecar. `node --check` clean; 11 mock assertions pass
-(`node scripts/test-dedupe-block.mjs`).
+`node --check` clean; sample report rendered and verified.
 
 ## Files
-    sidecar/interact.mjs        (+ scan-wide interaction de-dup)
-    sidecar/crawler.mjs         (+ shared scanCache, injects dedupe into interaction deps)
-    sidecar/finding-block.mjs   (new — toBlock() normalizer + codeExample dictionary)
-    sidecar/report-site.mjs     (+ carries evidence/recommendation/codeExample through dedup)
-    sidecar/report-site-html.mjs(+ renders Evidence / Recommendation / Code example + CSS)
+    sidecar/ai-audit.mjs        (asks the model for a selector; resolves it to a real box)
+    sidecar/crawler.mjs         (one screenshot per SCAN ROW; stamps shotKey + callout number)
+    sidecar/report-site-html.mjs(numbered red callouts on the row's screenshot)
+    sidecar/element-shots.mjs   (unchanged from the full-page delta; included for completeness)
 
-## 1. No more re-scanning the same controls (the duplicates)
-The interaction pass was opening + AI-auditing every interactive control on every
-page. On a 158-page shop, the site-global chrome — "Filter", "Kontantpris", "Mest
-populære", "Log ind" — got opened and audited 158 times each, costing an AI call
-per page and flooding the report with the identical 0-finding state.
+## Why no images were appearing (two real bugs)
+**1. AI findings had no element to outline.** An AI finding's node was built as
+`{ target: url }` — the PAGE URL, not a CSS selector. Nothing could be located, so
+no box, so no screenshot. That is exactly your first image: "Failing elements (1
+total, showing 1)" followed by an empty box and a URL.
+Fixed: `selector` is now a REQUIRED field in the audit schema, with a prompt rule
+telling the model to copy real attributes from the DOM it was given (id, name,
+class, aria-label, data-*) and never return a URL/XPath/guess. Immediately after the
+audit — while the state is still open — each selector is resolved on the live page
+into a bounding box AND the element's real outerHTML. Doing it there matters: an
+interaction-revealed drawer is gone by the time the report is built.
 
-Now a scan-wide cache keys each control by (kind + role + normalized accessible
-name), digits collapsed so "Item 1 / Item 2" count as one. The first time a
-control is seen it's audited; every identical control later in the scan is skipped
-("Skipped N control(s) already audited earlier this scan"). Its finding, if any,
-is still recorded once. This cuts the repeated AI-audit calls and the duplicate
-report rows at the source, and frees the per-page interaction budget for genuinely
-new controls.
+**2. Interaction states overwrote each other's screenshot.** Shots were keyed by
+URL pathname, but a drawer/modal state shares the page's URL — so every revealed
+state clobbered the base page's image. Now each shot is keyed by the SCAN ROW
+(`/checkout||Checkout — Step 5b - SaldoMax limit`), which is also what the report
+labels the image with, so a state's screenshot is its own.
 
-Why here and not just report-side dedup: skipping the WORK saves the tokens/time.
-Report-side dedup (already present via report-site) only tidies the output after
-you've already paid for 158 identical audits.
+## Callouts (matching your second image)
+Each node gets a `callout` number at record time. The report draws a RED rounded
+rectangle over each failing element on that row's full-page screenshot, with a
+numbered circular badge at its top-left, and the summary reads
+"Full-page screenshot — Checkout — Step 5b - SaldoMax limit (3 callouts)".
+Screenshots now render EXPANDED by default (`<details open>`) rather than hidden
+behind a "Show visual evidence" toggle.
 
-## 2. Uniform finding block { severity, wcag, description, evidence, recommendation, codeExample }
-AI-audit findings already carried this shape; deterministic (axe) and measured
-(interaction) findings did not, and the report card only showed Description.
-`finding-block.mjs#toBlock()` maps ANY finding to the flat block: impact→severity,
-help→recommendation, wcag[]→single most-specific wcag, evidence from the node HTML,
-and a codeExample — kept as-is for AI findings, or synthesized from a ~45-rule fix
-dictionary for axe/measured rules (unknown rules get "", never a fabricated snippet).
-The site report now carries these fields through de-dup and the HTML card renders
-Evidence, Recommendation, and a syntax-highlighted Code example block.
-
-## Two things I noticed (not changed here — say the word)
-- **"22 / 7 checkpoints scanned / 100%"** in the agent panel: the progress numerator
-  counts every recorded scan row (pages + interaction sub-states), while the
-  denominator is checkpoints. The dedup above reduces the inflation but the mismatch
-  is a real display bug — the panel should count checkpoints reached, not all rows.
-  One-line frontend fix.
-- **"AI audit failed … multimodal data but multimodal processing is not enabled"**:
-  the state audits are sending a screenshot to a text-only model. Same root cause as
-  the earlier mobile 400. Fix is to gate the screenshot when the configured model
-  isn't vision-capable (or route to one). I can add that guard in ai-audit.mjs.
-
-## Optional stronger lever (not enabled)
-A page-template cache (skip the AI *page* audit on structurally-identical pages)
-would cut cost further, but risks skipping page-specific AI judgement, so I left it
-off by default. Easy to add behind a flag if you want it.
+## One thing to watch
+There is now one full-page JPEG per scan row, and interaction states are rows too —
+a 13-page scan with interactions can hold 50+ images in the session JSON. Levers if
+it gets heavy: lower `quality` in `captureFullPageAnnotated` (currently 55), cap
+rows that get a shot, or downscale to ~900px wide. Say the word and I will add the
+downscale step.

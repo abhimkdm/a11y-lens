@@ -196,6 +196,14 @@ export async function aiChat(ai, prompt, maxTokens = 2000, opts = {}) {
 // Providers without native constraint (Claude) fall back to prompt + tolerant
 // parse, which is what we already do everywhere else.
 // ---------------------------------------------------------------------------
+// Models that have rejected image input, keyed "provider:model". Populated at
+// runtime from the provider's own error, so a text-only model degrades to a
+// text audit once instead of failing on every page of the crawl.
+const NO_VISION = new Set();
+
+export function markNoVision(provider, model) { NO_VISION.add(`${provider}:${model}`); }
+export function hasNoVision(provider, model) { return NO_VISION.has(`${provider}:${model}`); }
+
 export async function aiStructured(ai, { system, user, images = [], schema, maxTokens = 8000 }) {
   if (!ai?.provider) throw new Error("No AI provider configured. Set one in Settings.");
 
@@ -290,17 +298,24 @@ export async function aiStructured(ai, { system, user, images = [], schema, maxT
     if (!ai.apiKey) throw new Error("No API key set for this provider. Add one in Settings.");
     const { model, baseUrl } = resolveProviderFields(ai.provider, { model: ai.model, baseUrl: ai.baseUrl });
     const base = baseUrl || "https://api.openai.com/v1";
+    // Once a model has rejected images, stop sending them for the rest of the run.
+    // Without this every page repeats the same doomed multimodal request, which is
+    // how an AI Full Scan ends up with zero findings AND zero tokens.
+    const visionKey = `${ai.provider}:${model}`;
+    const useImages = images.length > 0 && !NO_VISION.has(visionKey);
     const content = [
-      ...images.map((b64) => ({
-        type: "image_url",
-        image_url: { url: `data:image/jpeg;base64,${b64}` },
-      })),
+      ...(useImages
+        ? images.map((b64) => ({
+            type: "image_url",
+            image_url: { url: `data:image/jpeg;base64,${b64}` },
+          }))
+        : []),
       { type: "text", text: user },
     ];
 
     const messages = [
       { role: "system", content: system },
-      { role: "user", content: images.length ? content : user },
+      { role: "user", content: useImages ? content : user },
     ];
 
     let r;
@@ -318,9 +333,41 @@ export async function aiStructured(ai, { system, user, images = [], schema, maxT
       });
     } catch (e) {
       const msg = String(e?.message ?? "");
-      // Some OpenAI-compatible gateways reject json_schema (or images). Degrade
-      // gracefully rather than failing the whole audit: retry as plain JSON mode.
-      if (/response_format|json_schema|image|content/i.test(msg)) {
+      // A multimodal rejection means this model is text-only. Retry WITHOUT the
+      // images (previously the retry re-sent them, so it failed identically and
+      // the whole audit was lost) and remember it so later pages skip vision.
+      const noVision = /multimodal|vision|image/i.test(msg);
+      if (noVision && useImages) {
+        NO_VISION.add(visionKey);
+        r = await openAiCompatChat({
+          baseUrl: base,
+          apiKey: ai.apiKey,
+          model,
+          maxTokens,
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user },
+          ],
+          responseFormat: {
+            type: "json_schema",
+            json_schema: { name: "expert_audit", strict: false, schema },
+          },
+        }).catch(() =>
+          // Gateway may also reject json_schema — final attempt: plain JSON mode.
+          openAiCompatChat({
+            baseUrl: base,
+            apiKey: ai.apiKey,
+            model,
+            maxTokens,
+            messages: [
+              { role: "system", content: system + "\n\nReply with ONLY valid JSON matching the requested shape. No prose, no markdown fences." },
+              { role: "user", content: user },
+            ],
+          })
+        );
+      } else if (/response_format|json_schema|image|content/i.test(msg)) {
+        // Some OpenAI-compatible gateways reject json_schema. Degrade gracefully
+        // rather than failing the whole audit: retry as plain JSON mode.
         r = await openAiCompatChat({
           baseUrl: base,
           apiKey: ai.apiKey,
@@ -328,7 +375,7 @@ export async function aiStructured(ai, { system, user, images = [], schema, maxT
           maxTokens,
           messages: [
             { role: "system", content: system + "\n\nReply with ONLY valid JSON matching the requested shape. No prose, no markdown fences." },
-            { role: "user", content: images.length ? content : user },
+            { role: "user", content: useImages ? content : user },
           ],
         });
       } else {

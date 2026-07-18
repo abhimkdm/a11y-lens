@@ -11,6 +11,55 @@
 // and still mean the same thing on the next run, and each one can expand to show
 // the actual screenshot of the failing element.
 
+import { generatedBy } from "./finding-block.mjs";
+
+// Per-page full-page screenshots, keyed by pathname. Set once at the top of
+// buildSiteReport so findingCard can look up the image for a node's page and
+// overlay the issue box. Kept module-scoped (single-threaded generation) to
+// avoid threading it through every render helper.
+let PAGE_SHOTS = {};
+
+const BOX_COLOR = { critical: "#FF5A5A", serious: "#FF9E3D", moderate: "#F2C230", minor: "#5CA8FF" };
+
+// Build the "full page with the issue squared" evidence for a finding: group its
+// located boxes by page, and for up to 2 affected pages that have a stored
+// screenshot, render the page image with every box overlaid as a % rectangle so
+// it scales with the responsive image. Bytes are reused from PAGE_SHOTS — the
+// image is stored once per page, not per box.
+function fullPageEvidence(nodes, impact) {
+  const byShot = new Map();
+  for (const n of nodes) {
+    if (!n.box) continue;
+    const key = n.shotKey || n.page;
+    const s = PAGE_SHOTS[key];
+    if (!s || !s.shot || !s.w || !s.h) continue;
+    if (!byShot.has(key)) byShot.set(key, { s, boxes: [], label: n.shotTitle || n.page });
+    byShot.get(key).boxes.push(n);
+  }
+  const groups = [...byShot.values()].slice(0, 2);
+  if (!groups.length) return "";
+  const color = BOX_COLOR[impact] ?? BOX_COLOR.minor;
+  return groups
+    .map(({ s, boxes, label }) => {
+      const rects = boxes
+        .map((n, i) => {
+          const b = n.box;
+          const left = (b.x / s.w) * 100;
+          const top = (b.y / s.h) * 100;
+          const w = Math.max(0.4, (b.w / s.w) * 100);
+          const h = Math.max(0.4, (b.h / s.h) * 100);
+          const num = n.callout ?? i + 1;
+          return `<span class="ibox" style="left:${left.toFixed(3)}%;top:${top.toFixed(3)}%;width:${w.toFixed(3)}%;height:${h.toFixed(3)}%;border-color:${color};background:${color}14">` +
+                 `<span class="inum" style="background:${color}">${num}</span></span>`;
+        })
+        .join("");
+      return `<details class="shot" open><summary>Full-page screenshot &mdash; ${esc(label)} <span class="muted">(${boxes.length} callout${boxes.length === 1 ? "" : "s"})</span></summary>
+        <div class="fullshot"><img loading="lazy" src="data:image/jpeg;base64,${s.shot}" alt="Full-page screenshot with the failing element outlined in red">${rects}</div>
+      </details>`;
+    })
+    .join("");
+}
+
 const CSS = `
 :root{
   --bg:#faf9f6; --panel:#fff; --panel2:#f7f6f3; --text:#1a1a1a; --muted:#5f5e5a; --faint:#888780;
@@ -69,6 +118,15 @@ pre{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padd
 .ev{display:block;font-family:var(--mono);font-size:12px;background:var(--panel2);border:1px solid var(--line);
   border-radius:6px;padding:8px 10px;white-space:pre-wrap;word-break:break-word;color:var(--faint)}
 pre.code{border-left:3px solid var(--serious)}
+.src{font-size:10.5px;font-weight:600;letter-spacing:.03em;padding:2px 8px;border-radius:999px;flex-shrink:0;text-transform:uppercase}
+.src-ai{color:#a78bfa;background:#a78bfa1a;border:1px solid #a78bfa55}
+.src-auto{color:#34d399;background:#34d3991a;border:1px solid #34d39955}
+.fullshot{position:relative;display:block;margin-top:8px;border:1px solid var(--line);border-radius:8px;overflow:hidden;max-width:820px}
+.fullshot img{display:block;width:100%;height:auto}
+.ibox{position:absolute;border:2.5px solid #FF5A5A;border-radius:3px;pointer-events:none}
+.inum{position:absolute;left:-13px;top:-13px;width:26px;height:26px;border-radius:50%;color:#fff;
+  font:700 13px/26px "IBM Plex Sans",system-ui,sans-serif;text-align:center;box-shadow:0 1px 4px #0006}
+.muted{color:var(--faint)}
 .shot{margin-top:8px}
 .shot summary{cursor:pointer;font-size:12.5px;color:var(--muted);padding:4px 0}
 .shot img{max-width:100%;border-radius:7px;border:1px solid var(--line);margin-top:6px;display:block}
@@ -113,22 +171,25 @@ const statCards = (counts, extra = []) => `
 
 function findingCard(f) {
   const wcag = (f.wcag ?? []).join(", ");
+  const gen = generatedBy(f);
   const affects =
     f.scope === "site-wide"
       ? `<span class="affects">Affects ${f.affectedPages.length} page${f.affectedPages.length === 1 ? "" : "s"}</span>`
       : "";
 
+  // Full-page screenshot(s) with the issue squared. One image per affected page
+  // (capped at 2 per finding), reusing the page's single stored screenshot and
+  // overlaying every located box for that page as a coloured rectangle.
+  const visual = fullPageEvidence(f.nodes ?? [], f.impact);
+
   const shots = (f.nodes ?? [])
     .map((n) => {
-      const img = n.screenshot
-        ? `<details class="shot"><summary>Show visual evidence</summary>
-             <img src="data:image/jpeg;base64,${n.screenshot}" alt="Screenshot of the failing element, outlined on the page">
-           </details>`
-        : "";
+      const loc = n.box ? "" : n.boxSkipped === "not-found"
+        ? ` <span class="muted">(element not found for a box)</span>`
+        : n.elementTiny ? ` <span class="muted">(0&times;0 element)</span>` : "";
       return `<div>
-        <div class="affects" style="font-family:var(--mono);font-size:11.5px">${esc(n.target)}</div>
+        <div class="affects" style="font-family:var(--mono);font-size:11.5px">${esc(n.target)}${loc}</div>
         <pre>${esc(n.html)}</pre>
-        ${img}
       </div>`;
     })
     .join("");
@@ -138,6 +199,7 @@ function findingCard(f) {
       <span class="id">${f.id}</span>
       <span class="prio prio-${f.impact}">${f.impact}</span>
       <span class="title">${esc(f.title)}</span>
+      <span class="src src-${gen === "AI" ? "ai" : "auto"}" title="${gen === "AI" ? "Found by the AI expert audit — a human should sanity-check it." : "Found deterministically by axe-core or a measured probe — not an AI judgement."}">${gen}</span>
       <span class="tag">${esc(f.rule)}</span>
       ${wcag ? `<span class="tag">WCAG ${esc(wcag)}</span>` : ""}
       <span class="tag">${f.occurrences}&times;</span>
@@ -148,8 +210,10 @@ function findingCard(f) {
         <dt>Description</dt><dd>${esc(f.description)}</dd>
         ${affects ? `<dt>Scope</dt><dd>${affects}</dd>` : ""}
         ${f.evidence ? `<dt>Evidence</dt><dd><code class="ev">${esc(String(f.evidence).slice(0, 500))}</code></dd>` : ""}
-        ${f.recommendation ? `<dt>Recommendation</dt><dd>${esc(f.recommendation)}</dd>` : ""}
+        ${f.recommendation ? `<dt>Fix</dt><dd>${esc(f.recommendation)}</dd>` : ""}
         ${f.codeExample ? `<dt>Code example</dt><dd><pre class="code">${esc(f.codeExample)}</pre></dd>` : ""}
+        <dt>Detected by</dt><dd>${gen === "AI" ? "AI expert audit (review recommended)" : "Automated — axe-core / measured probe"}</dd>
+        ${visual ? `<dt>Full-page screenshot</dt><dd>${visual}</dd>` : ""}
         <dt>Failing elements (${f.occurrences} total, showing ${(f.nodes ?? []).length})</dt>
         <dd>${shots || "<em>No element detail captured.</em>"}</dd>
         ${f.helpUrl ? `<dt>Reference</dt><dd><a href="${esc(f.helpUrl)}" target="_blank" rel="noreferrer">Rule documentation</a></dd>` : ""}
@@ -204,7 +268,8 @@ const toolbar = (counts, total) => `
   </div>
 </div>`;
 
-export function buildSiteReport(dedup, summary, meta) {
+export function buildSiteReport(dedup, summary, meta, pageShots = {}) {
+  PAGE_SHOTS = pageShots || {};
   const files = {};
   const when = new Date(meta.generatedAt ?? Date.now()).toISOString();
   const sub = `${dedup.stats.pages} pages · ${dedup.stats.totalOccurrences} findings · Generated ${when}`;
