@@ -496,6 +496,10 @@ app.get("/scan/full/status", (_req, res) => {
   res.json({
     ok: true, running: s.running, currentUrl: s.currentUrl,
     pages: s.pagesScanned, log: s.log.slice(-12), error: s.error, result: s.result,
+    // Progress against the REAL unit of work. pagesScanned counts every recorded
+    // row (a page AND each interaction-revealed state), so it overshoots the
+    // checkpoint/URL total — which is how "6 / 2 · 100%" happened.
+    unitsDone: s.unitsDone, unitsTotal: s.unitsTotal, stage: s.stage,
   });
 });
 

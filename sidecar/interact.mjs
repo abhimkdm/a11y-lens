@@ -342,6 +342,7 @@ async function openAndCheck(page, candidate, { gear, deps, keyboardEvidence, log
     label: `Interaction: ${triggerLabel}`,
     violations: [...measured, ...violations, ...aiFindings],
     keyboard,
+    shot: violations.__shot ?? null,   // screenshot of THIS revealed state
     meta: { kind: candidate.kind, trigger: triggerLabel, gear, aiAudited: !!deps.auditState },
   };
 }
@@ -460,6 +461,7 @@ async function probeValidation(page, { gear, deps, keyboardEvidence, log }) {
     label: "Interaction: form validation (empty submit)",
     violations: [...measured, ...violations, ...aiFindings],
     keyboard,
+    shot: violations.__shot ?? null,
     meta: { kind: "validation", gear, aiAudited: !!deps.auditState },
   };
 }
@@ -563,6 +565,7 @@ async function fillAndSubmit(page, { valueProfile, deps, log, valueLog, keyboard
     label: "Interaction: form filled & submitted (Operate)",
     violations: [...violations, ...aiFindings],
     keyboard,
+    shot: violations.__shot ?? null,
     meta: { kind: "operate-submit", gear: "Operate", submitLabel, fieldsFilled: valueLog.filter((v) => v.value != null).length, aiAudited: !!deps.auditState },
   };
 }

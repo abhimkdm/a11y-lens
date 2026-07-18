@@ -95,7 +95,7 @@ export default function ScanCenter() {
   };
   const [overlayMsg, setOverlayMsg] = useState("");
   const [maxPages, setMaxPages] = useState(10);
-  const [crawl, setCrawl] = useState<{ pages: { url: string; title: string; score: number }[]; log: { msg: string }[]; currentUrl: string | null } | null>(null);
+  const [crawl, setCrawl] = useState<{ pages: { url: string; title: string; score: number }[]; log: { msg: string }[]; currentUrl: string | null; unitsDone?: number; unitsTotal?: number; stage?: string } | null>(null);
   // Describes the currently running scan so the agent panel shows only the
   // agents this run actually enabled, and a real progress denominator when known.
   const [runInfo, setRunInfo] = useState<{ aiAudit: boolean; interact: boolean; total: number | null } | null>(null);
@@ -281,7 +281,7 @@ export default function ScanCenter() {
     pollRef.current = window.setInterval(async () => {
       const st = await api.fullScanStatus().catch(() => null);
       if (!st) return;
-      setCrawl({ pages: st.pages, log: st.log, currentUrl: st.currentUrl });
+      setCrawl({ pages: st.pages, log: st.log, currentUrl: st.currentUrl, unitsDone: st.unitsDone, unitsTotal: st.unitsTotal, stage: st.stage });
       if (!st.running) {
         stopPolling(); setScanning("idle");
         if (st.error) setError(st.error);
@@ -597,14 +597,24 @@ export default function ScanCenter() {
               aiAudit={runInfo?.aiAudit ?? false}
               interact={runInfo?.interact ?? false}
               total={runInfo?.total ?? null}
+              unitsDone={crawl.unitsDone}
+              unitsTotal={crawl.unitsTotal}
+              stage={crawl.stage}
             />
             <Paper variant="outlined" sx={{ mt: 2, p: 2, bgcolor: "#0E1116" }}>
               <Typography variant="overline">Activity log</Typography>
               <Stack spacing={0.25} sx={{ mt: 1 }}>
-                {crawl.log.map((l, i) => (
-                  <Typography key={i} variant="caption" color="text.secondary"
-                              sx={{ fontFamily: "monospace" }}>{l.msg}</Typography>
-                ))}
+                {/* "Could not activate X: TimeoutError" fires once per unclickable
+                    candidate and can be a dozen lines a page — it drowns the real
+                    activity. Still recorded in Logs for debugging, just not here. */}
+                {crawl.log
+                  .filter((l) => !/^Could not activate\b/i.test(l.msg))
+                  .map((l, i) => (
+                    <Typography key={i} variant="caption" color="text.secondary"
+                                sx={{ fontFamily: "monospace" }}>
+                      {l.msg.replace(/\u001b\[[0-9;]*m/g, "").replace(/\[\d+m/g, "")}
+                    </Typography>
+                  ))}
               </Stack>
             </Paper>
           </>

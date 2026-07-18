@@ -40,6 +40,11 @@ export function createCrawler() {
     aiProviderModel: null,
     aiAuditPages: 0,
     aiAuditStates: 0,   // interaction-revealed states (modals/drawers/validation) the AI audited
+    // Honest progress: units are PAGES/CHECKPOINTS (the real work unit), not the
+    // recorded-row count, which also includes every interaction-revealed state.
+    unitsDone: 0,
+    unitsTotal: 0,
+    stage: "scanning",  // scanning -> deduping -> reporting -> done
   };
 
   function log(msg) {
@@ -132,11 +137,15 @@ export function createCrawler() {
       try {
         const r = await captureFullPageAnnotated(page, violations, { maxPerRule: 3, maxTotal: 30 });
         if (r.pageShot) {
-          // Held until recordScan() names the row. Interaction states share the
-          // page's URL, so the key can't be the URL — it must be the scan row
-          // (e.g. "Checkout — Interaction: SaldoMax limit"), or every revealed
-          // state would overwrite the base page's screenshot.
-          state.__pendingShot = { shot: r.pageShot, w: r.pageW, h: r.pageH };
+          const shot = { shot: r.pageShot, w: r.pageW, h: r.pageH };
+          // Held for the base-page recordScan…
+          state.__pendingShot = shot;
+          // …and ALSO carried on the returned array, because the interaction pass
+          // scans every revealed state BEFORE any of them are recorded. With a
+          // single shared slot the first state consumed the last state's image and
+          // the rest got none — which is why interaction pages had findings but no
+          // screenshots. Non-enumerable so it never lands in the session JSON.
+          Object.defineProperty(r.violations, "__shot", { value: shot, enumerable: false });
         }
         return r.violations;
       } catch {
@@ -161,7 +170,10 @@ export function createCrawler() {
     state.running = true;
     state.startedAt = new Date().toISOString();
     state.pagesScanned = [];
-    state.pageShots = {};   // pathname+search -> { shot(base64), w, h } (one full-page shot per page)
+    state.pageShots = {};   // scan-row key -> { shot(base64), w, h } (one full-page shot per row)
+    state.unitsDone = 0;
+    state.unitsTotal = 0;
+    state.stage = "scanning";
     state.log = [];
     state.error = null;
     state.result = null;
@@ -276,6 +288,8 @@ export function createCrawler() {
           // as a distinct scenario in the report while still tracing back to the
           // page it came from.
           const label = `${baseTitle || baseUrl} — ${sc.label}`;
+          // Restore the screenshot captured while THIS state was open.
+          if (sc.shot) state.__pendingShot = sc.shot;
           recordScan(`${baseUrl}#${encodeURIComponent(sc.label)}`, label, sc.violations, sc.keyboard);
         }
         if (valueLog && valueLog.length) {
@@ -325,6 +339,7 @@ export function createCrawler() {
         // journeys (open drawer, add to cart) scannable — there is no URL to go
         // to, only a sequence of clicks that reveals the state.
         const total = opts.checkpointCount || 0;
+        state.unitsTotal = total;
         log(`Recorded-path replay: ${total} checkpoint${total === 1 ? "" : "s"} to reproduce and scan.`);
         for (let i = 0; i < total; i++) {
           if (!state.running) break;
@@ -358,8 +373,10 @@ export function createCrawler() {
           for (const sf of smellFindings) log(`⚠ ${sf.evidence} — no accessible/stable selector (WCAG 4.1.2)`);
           recordScan(url, title, [...violations, ...aiFindings, ...smellFindings], kb);
           await runInteractionPass(page, url, title);
+          state.unitsDone = i + 1;   // a checkpoint is done only after its states are scanned
         }
       } else if (urlList) {
+        state.unitsTotal = Math.min(urlList.length, maxPages);
         log(`Custom URL list scan started at ${origin} (${urlList.length} URL${urlList.length === 1 ? "" : "s"} provided).`);
         for (const raw of urlList) {
           if (!state.running) break;
@@ -395,8 +412,10 @@ export function createCrawler() {
           const aiFindings = await runAiAudit(page, target.href, violations, kb);
           recordScan(target.href, title, [...violations, ...aiFindings], kb);
           await runInteractionPass(page, target.href, title);
+          state.unitsDone++;
         }
       } else {
+        state.unitsTotal = maxPages;
         log(`Crawl started at ${origin} (max ${maxPages} pages).`);
         while (state.pagesScanned.length < maxPages && state.running) {
           const url = new URL(page.url());
@@ -414,6 +433,7 @@ export function createCrawler() {
             const aiFindings = await runAiAudit(page, page.url(), violations, kb);
             recordScan(page.url(), title, [...violations, ...aiFindings], kb);
             await runInteractionPass(page, page.url(), title);
+            state.unitsDone++;
           }
 
           if (state.pagesScanned.length >= maxPages) break;
@@ -467,6 +487,7 @@ export function createCrawler() {
         }
         let aiGroups = null, dedupeUsage = { inputTokens: 0, outputTokens: 0 };
         if (aiFindings.length) {
+          state.stage = "deduping";
           try {
             log(`AI audit: deduplicating ${aiFindings.length} findings across pages …`);
             const d = await dedupeFindings(aiFindings, ai);
@@ -508,6 +529,7 @@ export function createCrawler() {
     } finally {
       state.running = false;
       state.currentUrl = null;
+      state.stage = "done";
     }
   }
 

@@ -15,15 +15,17 @@ import type { ReactNode } from "react";
 
 type Log = { msg: string };
 
-type AgentKey = "crawler" | "axe" | "interact" | "reviewer" | "dedupe" | "report";
+type AgentKey = "crawler" | "axe" | "interact" | "reviewer" | "report";
 
 const AGENTS: { key: AgentKey; label: string; color: string; icon: ReactNode; re: RegExp }[] = [
-  { key: "crawler",  label: "Crawler",     color: "#38bdf8", icon: <TravelExploreIcon fontSize="small" />, re: /scanning:|exploring|navigat|checkpoint|page \d/i },
-  { key: "axe",      label: "axe-core",    color: "#34d399", icon: <VerifiedUserIcon fontSize="small" />,  re: /scanning:|scanned|violation|axe/i },
-  { key: "interact", label: "Interaction", color: "#fbbf24", icon: <TouchAppIcon fontSize="small" />,      re: /interaction pass|found \d+ candidate|could not activate|interaction:|operate gear|opening/i },
-  { key: "reviewer", label: "AI Reviewer", color: "#a78bfa", icon: <VisibilityIcon fontSize="small" />,    re: /ai audit|ai review|ai expert|auditing/i },
-  { key: "dedupe",   label: "Dedupe",      color: "#fb7185", icon: <LayersIcon fontSize="small" />,        re: /dedup|grouping|merg(e|ing) finding|clustered/i },
-  { key: "report",   label: "Report Writer", color: "#34d399", icon: <DescriptionIcon fontSize="small" />, re: /report|summar|writing/i },
+  // Pipeline order, left to right — this is the real sequence work flows through.
+  { key: "crawler",  label: "Crawler",       color: "#38bdf8", icon: <TravelExploreIcon fontSize="small" />, re: /scanning:|exploring|navigat|checkpoint|page \d/i },
+  { key: "axe",      label: "axe-core",      color: "#34d399", icon: <VerifiedUserIcon fontSize="small" />,  re: /scanning:|scanned|violation|axe/i },
+  { key: "interact", label: "Interaction",   color: "#fbbf24", icon: <TouchAppIcon fontSize="small" />,      re: /interaction pass|found \d+ candidate|interaction:|operate gear|opening/i },
+  { key: "reviewer", label: "AI Reviewer",   color: "#a78bfa", icon: <VisibilityIcon fontSize="small" />,    re: /ai audit|ai review|ai expert|auditing/i },
+  // Dedupe is no longer its own orb — it is the first half of the reporting
+  // stage, so its log lines light up Report Writer instead of adding a 6th orb.
+  { key: "report",   label: "Report Writer", color: "#fb7185", icon: <DescriptionIcon fontSize="small" />,   re: /dedup|grouping|merg(e|ing) finding|clustered|report|summar|writing/i },
 ];
 
 // Strip terminal colour codes that leak into log lines (…Call log: ␛[2m - waiting).
@@ -36,7 +38,7 @@ function clean(msg: string) {
 function spotlight(logs: Log[]): AgentKey | null {
   for (let i = logs.length - 1; i >= 0; i--) {
     const m = logs[i]?.msg ?? "";
-    for (const key of ["dedupe", "reviewer", "interact", "axe"] as AgentKey[]) {
+    for (const key of ["report", "reviewer", "interact", "axe"] as AgentKey[]) {
       const a = AGENTS.find((x) => x.key === key)!;
       if (a.re.test(m)) return key;
     }
@@ -46,6 +48,7 @@ function spotlight(logs: Log[]): AgentKey | null {
 
 export default function AgentActivityPanel({
   pages, logs, currentUrl, aiAudit, interact, total, mode = "scan",
+  unitsDone, unitsTotal, stage,
 }: {
   pages: number;
   logs: Log[];
@@ -54,6 +57,12 @@ export default function AgentActivityPanel({
   interact: boolean;
   total?: number | null;
   mode?: "scan" | "report";
+  // Real progress unit (pages/checkpoints) reported by the sidecar. `pages` is the
+  // recorded-ROW count, which also includes interaction states — using it as the
+  // numerator against a checkpoint total produced "6 / 2 · 100%".
+  unitsDone?: number;
+  unitsTotal?: number;
+  stage?: string;
 }) {
   // Report generation is a SINGLE long request with no progress feed, so there
   // is nothing honest to animate step-by-step. Show which agents are involved,
@@ -70,17 +79,29 @@ export default function AgentActivityPanel({
   // Which agents are actually part of THIS run.
   const enabled = new Set<AgentKey>(["crawler", "axe"]);
   if (interact) enabled.add("interact");
-  if (aiAudit) { enabled.add("reviewer"); enabled.add("dedupe"); }
+  if (aiAudit) { enabled.add("reviewer"); enabled.add("report"); }
   const shown = mode === "report"
-    ? AGENTS.filter((a) => a.key === "reviewer" || a.key === "dedupe" || a.key === "report")
+    ? AGENTS.filter((a) => a.key === "reviewer" || a.key === "report")
     : AGENTS.filter((a) => enabled.has(a.key));
 
-  const active: AgentKey = mode === "report" ? "report" : (spotlight(logs) ?? "axe");
+  // Once scanning is finished the remaining work is dedupe + result assembly,
+  // which is the Report Writer stage — so it lights up instead of the panel
+  // sitting at 100% with a scanner still pulsing.
+  const active: AgentKey =
+    mode === "report" ? "report"
+      : stage === "deduping" || stage === "done" ? "report"
+        : (spotlight(logs) ?? "axe");
   const latest = mode === "report"
     ? "Synthesising findings into a report — one request, no intermediate progress."
-    : logs.length ? clean(logs[logs.length - 1].msg) : "Starting…";
-  const determinate = mode !== "report" && typeof total === "number" && total > 0;
-  const pct = determinate ? Math.min(100, Math.round((pages / (total as number)) * 100)) : 0;
+    : (() => {
+        // Skip click-timeout spam so the live line shows real progress.
+        const useful = logs.filter((l) => !/^Could not activate\b/i.test(l.msg));
+        return useful.length ? clean(useful[useful.length - 1].msg) : "Starting…";
+      })();
+  const den = typeof unitsTotal === "number" && unitsTotal > 0 ? unitsTotal : (total ?? 0);
+  const num = typeof unitsDone === "number" ? unitsDone : pages;
+  const determinate = mode !== "report" && den > 0;
+  const pct = determinate ? Math.min(100, Math.round((Math.min(num, den) / den) * 100)) : 0;
 
   return (
     <Box
@@ -167,7 +188,9 @@ export default function AgentActivityPanel({
           <Typography variant="caption" color="text.secondary">
             {mode === "report"
               ? `Working — ${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")} elapsed`
-              : determinate ? `${pages} / ${total} checkpoints scanned` : `${pages} page${pages === 1 ? "" : "s"} scanned`}
+              : stage === "deduping" ? "Scan complete — grouping findings and writing the report"
+                : determinate ? `${Math.min(num, den)} / ${den} scanned${pages > num ? ` · ${pages} states recorded` : ""}`
+                  : `${pages} page${pages === 1 ? "" : "s"} scanned`}
           </Typography>
           {determinate && <Typography variant="caption" color="text.secondary">{pct}%</Typography>}
         </Stack>
