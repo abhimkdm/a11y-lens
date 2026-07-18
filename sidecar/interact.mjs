@@ -142,6 +142,16 @@ export function readInteractionState() {
 //   deps.captureKeyboard(page)     -> keyboard evidence | null
 //   deps.log(msg)                  -> progress line
 // ---------------------------------------------------------------------------
+// Stable signature for a candidate control, used to de-duplicate identical
+// controls across pages within one scan. Digits are collapsed (Item 1 / Item 2
+// → same component) and the name is normalized so the header "Filter" on 158
+// shop pages hashes to a single key.
+function interactionSig(c) {
+  const name = String(c.label || c.role || "")
+    .toLowerCase().replace(/\s+/g, " ").trim().replace(/\d+/g, "#").slice(0, 60);
+  return `${c.kind || "?"}|${c.role || "?"}|${name}`;
+}
+
 export async function exploreInteractions(page, opts, deps) {
   const {
     allowMutations = false,
@@ -166,6 +176,7 @@ export async function exploreInteractions(page, opts, deps) {
   log(`Found ${candidates.length} candidate interactive element(s).`);
 
   let done = 0;
+  let skipped = 0;
   for (const c of candidates) {
     if (done >= maxInteractions) { log(`Reached interaction cap (${maxInteractions}).`); break; }
 
@@ -173,9 +184,20 @@ export async function exploreInteractions(page, opts, deps) {
     // are empty anyway); in Operate it's a real second gate.
     if (DENY.test(c.label)) { log(`Skipping "${c.label}" (matches destructive DENY list).`); continue; }
 
+    // Scan-wide de-duplication: a site-global control (Filter, "Log ind", a nav
+    // drawer) is structurally the SAME element on every one of hundreds of pages.
+    // Opening + AI-auditing it per page is wasted time and tokens and floods the
+    // report with the identical 0-finding state. If an identical control (same
+    // kind + role + accessible name) was already handled earlier this scan, skip
+    // it — its finding, if any, is already recorded once. Does not count toward
+    // the per-page cap, so the budget goes to genuinely new controls.
+    const sig = interactionSig(c);
+    if (deps.dedupe?.seen?.(sig)) { skipped++; continue; }
+
     const revealed = await openAndCheck(page, c, { gear, deps, keyboardEvidence, log });
-    if (revealed) { scenarios.push(revealed); done++; }
+    if (revealed) { scenarios.push(revealed); done++; deps.dedupe?.add?.(sig); }
   }
+  if (skipped) log(`Skipped ${skipped} control(s) already audited earlier this scan (de-duplicated).`);
 
   // Validation states: focus-then-blur to surface field-level errors, and an
   // empty submit to surface form-level error announcement. Both are safe in

@@ -66,6 +66,9 @@ a{color:var(--text)}
 .dl dd{margin:4px 0 0}
 pre{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:10px;overflow:auto;
   font-family:var(--mono);font-size:12px;white-space:pre-wrap;word-break:break-word;margin:6px 0}
+.ev{display:block;font-family:var(--mono);font-size:12px;background:var(--panel2);border:1px solid var(--line);
+  border-radius:6px;padding:8px 10px;white-space:pre-wrap;word-break:break-word;color:var(--faint)}
+pre.code{border-left:3px solid var(--serious)}
 .shot{margin-top:8px}
 .shot summary{cursor:pointer;font-size:12.5px;color:var(--muted);padding:4px 0}
 .shot img{max-width:100%;border-radius:7px;border:1px solid var(--line);margin-top:6px;display:block}
@@ -144,6 +147,9 @@ function findingCard(f) {
       <dl class="dl">
         <dt>Description</dt><dd>${esc(f.description)}</dd>
         ${affects ? `<dt>Scope</dt><dd>${affects}</dd>` : ""}
+        ${f.evidence ? `<dt>Evidence</dt><dd><code class="ev">${esc(String(f.evidence).slice(0, 500))}</code></dd>` : ""}
+        ${f.recommendation ? `<dt>Recommendation</dt><dd>${esc(f.recommendation)}</dd>` : ""}
+        ${f.codeExample ? `<dt>Code example</dt><dd><pre class="code">${esc(f.codeExample)}</pre></dd>` : ""}
         <dt>Failing elements (${f.occurrences} total, showing ${(f.nodes ?? []).length})</dt>
         <dd>${shots || "<em>No element detail captured.</em>"}</dd>
         ${f.helpUrl ? `<dt>Reference</dt><dd><a href="${esc(f.helpUrl)}" target="_blank" rel="noreferrer">Rule documentation</a></dd>` : ""}

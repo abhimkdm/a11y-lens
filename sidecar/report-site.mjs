@@ -20,6 +20,7 @@
 import { createHash } from "node:crypto";
 import { aiChat } from "./ai.mjs";
 import { parseAiJson } from "./json-repair.mjs";
+import { codeExampleFor } from "./finding-block.mjs";
 
 const SEV_ORDER = { critical: 0, serious: 1, moderate: 2, minor: 3 };
 
@@ -60,6 +61,10 @@ export function deduplicate(pages) {
           description: v.description,
           helpUrl: v.helpUrl,
           wcag: v.wcag ?? [],
+          // Carried so the report block can show Evidence / Recommendation / Code.
+          recommendation: v.recommendation || v.help || "",
+          evidence: v.evidence || (Array.isArray(v.nodes) && v.nodes[0] && (v.nodes[0].html || v.nodes[0].target)) || "",
+          codeExample: v.codeExample || codeExampleFor(v.id, v.rule),
           pages: new Map(),
         });
       }
@@ -93,6 +98,9 @@ export function deduplicate(pages) {
       description: entry.description,
       helpUrl: entry.helpUrl,
       wcag: entry.wcag,
+      recommendation: entry.recommendation,
+      evidence: entry.evidence,
+      codeExample: entry.codeExample,
       occurrences,
       affectedPages: affected,
       nodes: samples,

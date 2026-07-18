@@ -144,6 +144,10 @@ export function createCrawler() {
     const origin = new URL(page.url()).origin;
     const visited = new Set();
     const merged = new Map(); // ruleId -> violation with nodes annotated by page
+    // Shared across the whole scan: signatures of interactive controls already
+    // audited, so site-global chrome (filters, drawers, nav) is scanned once, not
+    // once per page. Reset every run because it lives in this closure.
+    const scanCache = { interaction: new Set() };
     const urlList = Array.isArray(opts.urlList) ? opts.urlList.filter(u => typeof u === "string" && u.trim()) : null;
     const maxPages = urlList ? Math.min(urlList.length, 100) : Math.min(opts.maxPages ?? 10, 40);
 
@@ -201,6 +205,11 @@ export function createCrawler() {
             scanPage: (p) => scanPage(p, { elementScreenshots: opts.elementScreenshots }),
             captureKeyboard: (p) => captureKeyboardEvidence(p),
             log,
+            // Scan-wide de-duplication of interactive controls (see scanCache).
+            dedupe: {
+              seen: (sig) => scanCache.interaction.has(sig),
+              add: (sig) => scanCache.interaction.add(sig),
+            },
             // Only present when AI Full Scan is on: runs the manual-reviewer AI
             // audit on the revealed state (open modal, drawer, menu, validation
             // errors) while it is live, so focus-trap / aria-modal / announcement
