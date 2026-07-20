@@ -25,7 +25,8 @@ function locatorFor(page, sel) {
     case "role":        return sel.name ? page.getByRole(sel.role, { name: sel.name }) : page.getByRole(sel.role);
     case "label":       return page.getByLabel(sel.value);
     case "placeholder": return page.getByPlaceholder(sel.value);
-    case "text":        return page.getByText(sel.value);
+    case "text":        return page.getByText(sel.value, { exact: true });
+    case "tagText":     return page.locator(sel.tag || "*", { hasText: sel.value });
     case "xpath":       return page.locator(`xpath=${sel.value}`);
     case "css":
     default:            return page.locator(sel.value);
@@ -39,13 +40,32 @@ function locatorFor(page, sel) {
 export async function resolve(page, target, { waitTimeout = 4000 } = {}) {
   const sels = (target && target.selectors) || [];
   let ambiguous = null;
+  let hiddenOnly = null;
+
+  // Prefer a match that is actually VISIBLE. A stale positional CSS path
+  // ("body > div:nth-of-type(1) > header > div:nth-of-type(3)") often still
+  // matches SOMETHING after a redesign — just not the thing you clicked, or an
+  // off-screen duplicate. The old code accepted the first tier with count===1 and
+  // then Playwright sat there until the 15s click timeout. Now an invisible match
+  // is remembered but we keep looking for a visible one first.
   for (const sel of sels) {
     let loc;
     try { loc = locatorFor(page, sel); } catch { continue; }
     let count;
     try { count = await loc.count(); } catch { continue; }
-    if (count === 1) return { loc, tier: sel.by, sel, ambiguous: false };
-    if (count > 1 && !ambiguous) ambiguous = { loc: loc.first(), tier: sel.by, sel, ambiguous: true, count };
+    if (count === 0) continue;
+
+    const cand = count === 1 ? loc : loc.first();
+    let visible = false;
+    try { visible = await cand.isVisible({ timeout: 500 }); } catch { visible = false; }
+
+    if (visible) {
+      if (count === 1) return { loc: cand, tier: sel.by, sel, ambiguous: false };
+      if (!ambiguous) ambiguous = { loc: cand, tier: sel.by, sel, ambiguous: true, count };
+    } else if (!hiddenOnly || (count === 1 && hiddenOnly.ambiguous)) {
+      // Keep the best hidden candidate: a unique match beats an ambiguous one.
+      hiddenOnly = { loc: cand, tier: sel.by, sel, ambiguous: count > 1, hidden: true };
+    }
   }
   if (ambiguous) return ambiguous;
 
@@ -64,19 +84,45 @@ export async function resolve(page, target, { waitTimeout = 4000 } = {}) {
       for (const sel of sels) {
         const loc = locatorFor(page, sel);
         const c = await loc.count().catch(() => 0);
-        if (c >= 1) return { loc: c === 1 ? loc : loc.first(), tier: sel.by, sel, ambiguous: c > 1, revealed: true };
+        if (c >= 1) {
+          const cand = c === 1 ? loc : loc.first();
+          if (await cand.isVisible({ timeout: 500 }).catch(() => false))
+            return { loc: cand, tier: sel.by, sel, ambiguous: c > 1, revealed: true };
+        }
       }
     } catch { /* try the next trigger */ }
+  }
+
+  // Last resort by IDENTITY rather than position: the element's own text or
+  // accessible name, anywhere on the page. Survives a DOM restructure that
+  // invalidates every recorded path.
+  const label = (target && (target.name || target.text)) || "";
+  if (label) {
+    for (const probe of [
+      () => page.getByRole(target.role || "button", { name: label }),
+      () => page.getByText(label, { exact: true }),
+      () => page.getByText(label),
+    ]) {
+      try {
+        const loc = probe().first();
+        if (await loc.count() === 0) continue;
+        if (!(await loc.isVisible({ timeout: 500 }).catch(() => false))) continue;
+        return { loc, tier: "identity", sel: { by: "identity", value: label }, ambiguous: false, recovered: true };
+      } catch { /* next probe */ }
+    }
   }
 
   for (const sel of sels.filter((s) => s.by === "css" || s.by === "xpath")) {
     try {
       const loc = locatorFor(page, sel).first();
-      await loc.waitFor({ state: "attached", timeout: waitTimeout });
+      await loc.waitFor({ state: "visible", timeout: waitTimeout });
       return { loc, tier: sel.by, sel, ambiguous: false, waited: true };
     } catch { /* try next */ }
   }
-  return null;
+
+  // Nothing visible anywhere. Return the hidden match if we have one so the
+  // caller can try to force it, rather than failing outright.
+  return hiddenOnly;
 }
 
 // Let a SPA settle after an action/navigation without hanging on a chatty page.
@@ -117,8 +163,10 @@ export async function replayStep(page, step, { onLog = () => {}, onMasked = null
 
   const found = await resolve(page, step.target);
   if (!found) {
-    const desc = (step.target && (step.target.name || step.target.tag)) || t;
-    throw Object.assign(new Error(`Could not locate element for ${t} ("${desc}")`), { step });
+    const tg = step.target || {};
+    const desc = tg.name || tg.text || tg.testid || tg.tag || t;
+    const hint = tg.role ? ` role=${tg.role}` : "";
+    throw Object.assign(new Error(`Could not locate ${t} target "${desc}"${hint}`), { step });
   }
   const { loc, tier, ambiguous } = found;
   const smell = tier === "xpath"; // fell through every stable/accessible tier
@@ -127,7 +175,28 @@ export async function replayStep(page, step, { onLog = () => {}, onMasked = null
   try {
     await loc.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {});
     switch (t) {
-      case "click":   await loc.click({ timeout: stepTimeout }); break;
+      case "click": {
+        // A first attempt with a SHORT timeout: if the element is the right one it
+        // clicks immediately, and if it is stale we find out in 4s instead of 15.
+        try {
+          await loc.click({ timeout: 4000 });
+        } catch {
+          // It matched but was not actionable — covered by an overlay, still
+          // animating in, or zero-size. Escalate rather than give up.
+          await loc.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+          try {
+            await loc.click({ timeout: 4000, force: true });
+          } catch {
+            const ok = await loc.evaluate((el) => {
+              if (!(el instanceof HTMLElement)) return false;
+              el.click();
+              return true;
+            }).catch(() => false);
+            if (!ok) throw new Error("element matched but could not be clicked (hidden, covered, or detached)");
+          }
+        }
+        break;
+      }
       case "fill":    await loc.fill(step.value ?? "", { timeout: stepTimeout }); break;
       case "check":   await loc.check({ timeout: stepTimeout }).catch(() => loc.click({ timeout: stepTimeout })); break;
       case "uncheck": await loc.uncheck({ timeout: stepTimeout }).catch(() => loc.click({ timeout: stepTimeout })); break;
@@ -151,7 +220,11 @@ export async function replayStep(page, step, { onLog = () => {}, onMasked = null
       default:        onLog(`unknown step type: ${t} — skipped`); return { ok: true, skipped: true, tier };
     }
   } catch (e) {
-    throw Object.assign(new Error(`${t} failed via ${tier}: ${String(e.message ?? e).slice(0, 140)}`), { step, tier });
+    const tg = step.target || {};
+    const desc = tg.name || tg.text || tg.testid || tg.tag || t;
+    throw Object.assign(
+      new Error(`${t} "${desc}" failed (found via ${tier}): ${String(e.message ?? e).slice(0, 120)}`),
+      { step, tier });
   }
   await settle(page, { timeout: 4000 });
   return { ok: true, tier, smell };

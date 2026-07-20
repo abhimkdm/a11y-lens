@@ -2,10 +2,9 @@
   "name": "a11y-lens-sidecar",
   "private": true,
   "type": "module",
+  "description": "Bundled A11y Lens automation sidecar. Generated file — do not edit.",
   "dependencies": {
-    "express": "^4.21.2",
-    "cors": "^2.8.5",
-    "axe-core": "^4.10.2",
-    "playwright": "^1.49.0"
+    "axe-core": "^4.12.1",
+    "playwright": "^1.61.1"
   }
 }

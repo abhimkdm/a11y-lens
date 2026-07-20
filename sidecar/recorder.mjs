@@ -151,6 +151,34 @@ export const CAPTURE_SRC = `(() => {
     }
     var sid=stableId(el);
     if(sid){ var idsel; try { idsel='#'+CSS.escape(sid); } catch(e){ idsel='#'+sid; } out.push({by:'css',value:idsel,unique:uniqueCss(idsel)}); }
+
+    // Text tier. A clickable <div>/<span> with no role and no accessible name
+    // would otherwise fall straight to a positional CSS path, which is exactly
+    // what breaks after a redesign ("div:nth-of-type(3)"). Its visible text is
+    // usually the most durable thing about it.
+    var own = clean(el.textContent);
+    if(own && own.length <= 60){
+      out.push({by:'tagText', tag:tag, value:own});   // scoped to the tag = fewer collisions
+      out.push({by:'text',    value:own});
+    }
+
+    // Stable-looking classes only: skip CSS-module/utility hashes, which change
+    // on every build and are worse than useless as an identity.
+    var cls = (el.className && typeof el.className === 'string') ? el.className.trim().split(/\s+/) : [];
+    var good = [];
+    for(var ci=0; ci<cls.length && good.length<2; ci++){
+      var cn = cls[ci];
+      if(!cn || cn.length>34) continue;
+      if(/\d{3,}/.test(cn)) continue;              // counters
+      if(/[0-9a-f]{6,}/i.test(cn)) continue;        // hashes
+      if(/^(css-|sc-|jsx-|_|makeStyles|Mui[A-Z].*-)/.test(cn)) continue; // generated
+      good.push(cn);
+    }
+    if(good.length){
+      var csel = tag + '.' + good.map(function(c){ try { return CSS.escape(c); } catch(e){ return c; } }).join('.');
+      out.push({by:'css', value:csel, unique:uniqueCss(csel)});
+    }
+
     var cp=cssPath(el); if(cp) out.push({by:'css',value:cp,unique:uniqueCss(cp)});
     out.push({by:'xpath',value:xPath(el)});
     return out;
@@ -199,7 +227,16 @@ export const CAPTURE_SRC = `(() => {
     return out;
   }
 
-  function describe(el){ return { selectors:selectorsFor(el), reveal:revealFor(el), role:role(el), name:accName(el), tag:el.tagName?el.tagName.toLowerCase():'' }; }
+  function describe(el){
+    var t = clean(el.textContent);
+    return {
+      selectors:selectorsFor(el), reveal:revealFor(el),
+      role:role(el), name:accName(el),
+      tag:el.tagName?el.tagName.toLowerCase():'',
+      text: t ? t.slice(0,80) : '',                 // for readable failure messages
+      testid: attr(el,'data-testid') || attr(el,'data-test') || attr(el,'data-qa') || null,
+    };
+  }
   function send(step){ try { if(window.__a11yRecordStep) window.__a11yRecordStep(step); } catch(e){} }
 
   document.addEventListener('click', function(e){

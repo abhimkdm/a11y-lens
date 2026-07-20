@@ -23,6 +23,7 @@ function makePage(counts, attachable = new Set(), calls = null) {
   const loc = (key) => ({
     _key: key,
     async count() { return counts[key] ?? 0; },
+    async isVisible() { return (counts[key] ?? 0) > 0; },   // real locators expose this
     first() { return loc(key); },
     async waitFor() { if (attachable.has(key)) return; throw new Error("not attached"); },
     async scrollIntoViewIfNeeded() {},

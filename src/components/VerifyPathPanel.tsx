@@ -18,10 +18,11 @@ type Summary = {
 };
 
 // Tiers that mean the element was found by something stable AND accessible.
-const STABLE = ["testid", "role", "label", "placeholder", "text"];
+const STABLE = ["testid", "role", "label", "placeholder", "text", "tagText", "identity"];
 const TIER_LABEL: Record<string, string> = {
   testid: "data-testid", role: "role + name", label: "label", placeholder: "placeholder",
-  text: "text", css: "CSS path", xpath: "XPath", navigate: "navigate", masked: "masked", keyboard: "keyboard",
+  text: "text", tagText: "tag + text", identity: "recovered by name",
+  css: "CSS path", xpath: "XPath", navigate: "navigate", masked: "masked", keyboard: "keyboard",
 };
 
 export default function VerifyPathPanel({
