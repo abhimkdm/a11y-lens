@@ -267,9 +267,14 @@ export const sessions = {
 
   list() {
     return db.prepare(
-      `SELECT id, url, title, timestamp, score, kind, counts
+      // hasAi lets the UI hide AI-only actions (the AI cost export) on scans that
+      // never ran a model. Computed with json_extract so we don't parse 200 blobs:
+      // an AI Full Scan sets data.aiAudit, "Generate AI Report" sets data.aiReport.
+      `SELECT id, url, title, timestamp, score, kind, counts,
+              (json_extract(data, '$.aiAudit')  IS NOT NULL
+            OR json_extract(data, '$.aiReport') IS NOT NULL) AS hasAi
        FROM sessions ORDER BY timestamp DESC LIMIT 200`
-    ).all().map(r => ({ ...r, counts: JSON.parse(r.counts) }));
+    ).all().map(r => ({ ...r, counts: JSON.parse(r.counts), hasAi: !!r.hasAi }));
   },
 
   get(id) {

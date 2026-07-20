@@ -25,6 +25,7 @@ import ExpertAuditPanel from "../components/ExpertAuditPanel";
 import ScoreRing from "../components/ScoreRing";
 import VerifyPathPanel from "../components/VerifyPathPanel";
 import AgentActivityPanel from "../components/AgentActivityPanel";
+import { saveFile } from "../utils/saveFile";
 
 // Feature flag — the AI Expert Audit (incl. cross-check, probes, scope selector)
 // is fully built and tested but hidden from the UI for now. Flip to `true` to
@@ -137,6 +138,11 @@ export default function ScanCenter() {
     if (!r.ok) { setError(r.error ?? "Could not start recording"); return; }
     setRecording(true);
     setRecordedCount(0);
+    // A recorded journey is almost always about interaction-revealed states —
+    // that is the reason to record one. Turn the interaction pass on so
+    // "Replay & scan" audits the drawers and validation the journey opens,
+    // instead of silently scanning only the landing state of each checkpoint.
+    setInteract(true);
     recordPollRef.current = window.setInterval(async () => {
       const st = await api.recordStatus().catch(() => null);
       if (st?.ok) setRecordedCount(st.steps ?? st.entries.length);
@@ -186,14 +192,12 @@ export default function ScanCenter() {
     }
   };
 
-  const downloadRecordedPath = () => {
+  const downloadRecordedPath = async () => {
     if (!recordingObj) return;
-    const blob = new Blob([JSON.stringify(recordingObj, null, 2)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `a11y-lens-recording_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    const name = `a11y-lens-recording_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.json`;
+    const res = await saveFile(name, JSON.stringify(recordingObj, null, 2), "application/json");
+    if (res.cancelled) return;                       // user pressed Cancel — say nothing
+    setNotice(res.path ? `Recording saved to ${res.path}` : "Recording saved.");
   };
 
   const parseUrlListJson = (raw: string): string[] => {

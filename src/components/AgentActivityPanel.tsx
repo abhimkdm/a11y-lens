@@ -77,9 +77,13 @@ export default function AgentActivityPanel({
   }, [mode]);
 
   // Which agents are actually part of THIS run.
-  const enabled = new Set<AgentKey>(["crawler", "axe"]);
+  // Report Writer is present on EVERY run, AI or not: a plain Full Scan still
+  // merges findings, scores pages and assembles the report payload — it just does
+  // it deterministically instead of asking a model. Only the AI Reviewer is
+  // genuinely AI-only.
+  const enabled = new Set<AgentKey>(["crawler", "axe", "report"]);
   if (interact) enabled.add("interact");
-  if (aiAudit) { enabled.add("reviewer"); enabled.add("report"); }
+  if (aiAudit) enabled.add("reviewer");
   const shown = mode === "report"
     ? AGENTS.filter((a) => a.key === "reviewer" || a.key === "report")
     : AGENTS.filter((a) => enabled.has(a.key));

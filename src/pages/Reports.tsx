@@ -12,12 +12,14 @@ import SeverityChip from "../components/SeverityChip";
 import { api } from "../services/api";
 import { buildHtmlReport } from "../utils/reportHtml";
 import { buildAiUsageReport } from "../utils/aiUsageReportHtml";
+import { saveFile } from "../utils/saveFile";
 import { useAppStore } from "../store/useAppStore";
 import type { Severity } from "../store/useAppStore";
 
 interface SessionRow {
   id: number; url: string; title: string; timestamp: string;
   score: number; kind: string; counts: Record<Severity, number>;
+  hasAi?: boolean;   // false for a Full Scan with no AI pass — hides AI-only exports
 }
 interface DiffItem { rule: string; impact: Severity; help: string; target: string }
 interface Comparison {
@@ -40,23 +42,9 @@ interface Comparison {
 // So: ask the sidecar to write the file with Node (reliable everywhere), and
 // only fall back to the blob trick if the sidecar isn't reachable.
 async function save(name: string, content: string, type: string): Promise<string | null> {
-  const r = await api.exportFile(name, content).catch(() => null);
-  if (r?.ok) return r.path as string;
-
-  // Fallback: browser download, done correctly.
-  const url = URL.createObjectURL(new Blob([content], { type }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.style.display = "none";
-  document.body.appendChild(a);   // must be in the DOM for some engines
-  a.click();
-  // Give the download a tick to start before revoking the blob.
-  setTimeout(() => {
-    URL.revokeObjectURL(url);
-    a.remove();
-  }, 2000);
-  return null;
+  // Ask the user where to save (native dialog when available); see utils/saveFile.
+  const r = await saveFile(name, content, type);
+  return r.cancelled ? null : r.path;
 }
 
 function DiffList({ title, items, tone }: { title: string; items: DiffItem[]; tone: string }) {
@@ -240,10 +228,15 @@ export default function Reports() {
                       onClick={() => exportSession(row, "html")}>HTML</Button>
               <Button size="small" variant="outlined" startIcon={<DataObjectIcon />}
                       onClick={() => exportSession(row, "session")}>Session</Button>
-              <Tooltip title="Management-facing report: model used, token consumption, and estimated AI cost across both AI passes (AI Full Scan audit and generated AI report).">
-                <Button size="small" variant="outlined" startIcon={<PaidOutlinedIcon />}
-                        onClick={() => exportSession(row, "ai-usage")}>AI cost</Button>
-              </Tooltip>
+              {/* Only offered when a model actually ran. A plain Full Scan spends
+                  nothing, so an AI cost export would be an empty document — better
+                  to not show the button than to show one that explains itself. */}
+              {row.hasAi !== false && (
+                <Tooltip title="Management-facing report: model used, token consumption, and estimated AI cost across both AI passes (AI Full Scan audit and generated AI report).">
+                  <Button size="small" variant="outlined" startIcon={<PaidOutlinedIcon />}
+                          onClick={() => exportSession(row, "ai-usage")}>AI cost</Button>
+                </Tooltip>
+              )}
               {row.kind === "full" && (
                 <Tooltip title="Multi-page report: shared chrome issues collapsed into one site-wide section, stable finding IDs, and an AI executive summary.">
                   <span>

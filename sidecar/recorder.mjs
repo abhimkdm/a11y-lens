@@ -38,6 +38,9 @@ export const CAPTURE_SRC = `(() => {
   if (window.__A11Y_REC_INSTALLED) return;
   window.__A11Y_REC_INSTALLED = true;
 
+  // Recorded events: click, change, and Enter/Escape only.
+  // NOT recorded: mouseover/mousemove/hover, scroll, focus. They are high-volume,
+  // rarely intentional, and replaying them adds fragility without adding coverage.
   var MASK_RE = /pass|passwd|password|otp|cvv|cvc|ccv|card|cardnum|creditcard|ssn|sin|secret|token|pin|securitycode|authcode/i;
   var AUTOCOMPLETE_MASK = { 'current-password':1,'new-password':1,'one-time-code':1,'cc-number':1,'cc-csc':1,'cc-exp':1,'cc-exp-month':1,'cc-exp-year':1 };
 
@@ -166,7 +169,37 @@ export const CAPTURE_SRC = `(() => {
     return false;
   }
 
-  function describe(el){ return { selectors:selectorsFor(el), role:role(el), name:accName(el), tag:el.tagName?el.tagName.toLowerCase():'' }; }
+  // Menu ancestors whose HOVER reveals this element.
+  //
+  // Hover itself is deliberately NOT recorded as a step: mousemove/mouseover fire
+  // constantly, would bloat the recording with noise, and are not user INTENT.
+  // But a submenu item often does not exist in the DOM until its parent is
+  // hovered, so we record how to REVEAL the target and let replay hover only when
+  // it actually needs to.
+  function revealFor(el){
+    var out=[], node=el, hops=0;
+    while(node && node.parentElement && hops<6){
+      var parent=node.parentElement;
+      var menuish = parent.matches && (parent.matches('[aria-haspopup],[role=menu],[role=menubar],[role=navigation],nav,li,.dropdown,.menu,.submenu') );
+      if(menuish){
+        // the trigger is the first labelled control in this container that is NOT
+        // an ancestor of our target
+        var cands = parent.querySelectorAll('a,button,[role=button],[role=menuitem],summary,[aria-haspopup]');
+        for(var i=0;i<cands.length && out.length<3;i++){
+          var c=cands[i];
+          if(c===el || c.contains(el)) continue;
+          var n=accName(c); if(!n) continue;
+          var r=role(c);
+          if(r && n){ out.push({by:'role', role:r, name:n}); }
+          break;
+        }
+      }
+      node=parent; hops++;
+    }
+    return out;
+  }
+
+  function describe(el){ return { selectors:selectorsFor(el), reveal:revealFor(el), role:role(el), name:accName(el), tag:el.tagName?el.tagName.toLowerCase():'' }; }
   function send(step){ try { if(window.__a11yRecordStep) window.__a11yRecordStep(step); } catch(e){} }
 
   document.addEventListener('click', function(e){

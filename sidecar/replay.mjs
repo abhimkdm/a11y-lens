@@ -48,6 +48,27 @@ export async function resolve(page, target, { waitTimeout = 4000 } = {}) {
     if (count > 1 && !ambiguous) ambiguous = { loc: loc.first(), tier: sel.by, sel, ambiguous: true, count };
   }
   if (ambiguous) return ambiguous;
+
+  // Hover-revealed menus. Plenty of navigation only renders its submenu while the
+  // parent item is hovered, so the recorded child ("Regninger og betaling") simply
+  // does not exist in the DOM until we hover its trigger. Hover is deliberately
+  // NOT recorded as a step — it is noise and fires constantly — so instead each
+  // click carries the selectors of its menu ancestors, and we replay the hover
+  // only here, on demand, when the element cannot be found.
+  for (const rev of (target && target.reveal) || []) {
+    try {
+      const trig = locatorFor(page, rev).first();
+      if (await trig.count() === 0) continue;
+      await trig.hover({ timeout: 2500 });
+      await page.waitForTimeout(350);
+      for (const sel of sels) {
+        const loc = locatorFor(page, sel);
+        const c = await loc.count().catch(() => 0);
+        if (c >= 1) return { loc: c === 1 ? loc : loc.first(), tier: sel.by, sel, ambiguous: c > 1, revealed: true };
+      }
+    } catch { /* try the next trigger */ }
+  }
+
   for (const sel of sels.filter((s) => s.by === "css" || s.by === "xpath")) {
     try {
       const loc = locatorFor(page, sel).first();
@@ -164,23 +185,51 @@ export function createReplayer(recording, { onLog = () => {}, onMasked = null } 
   checkpoints = Array.from(new Set(checkpoints)).sort((a, b) => a - b);
 
   let cursor = 0; // index into steps[]
-  const state = { checkpointCount: checkpoints.length, done: false, allSmells: [] };
+  const state = { checkpointCount: checkpoints.length, done: false, allSmells: [], redrives: 0 };
 
-  async function advanceTo(page, targetStepIndex) {
-    const smells = [];
-    while (cursor < steps.length && steps[cursor].i <= targetStepIndex) {
-      const step = steps[cursor];
-      cursor++;
-      const res = await replayStep(page, step, { onLog, onMasked });
-      if (res && res.smell) { smells.push(step); state.allSmells.push(step); }
+  async function runRange(page, from, to, collect) {
+    for (let k = from; k < steps.length && steps[k].i <= to; k++) {
+      const res = await replayStep(page, steps[k], { onLog, onMasked });
+      if (res && res.smell && collect) { collect.push(steps[k]); state.allSmells.push(steps[k]); }
+      cursor = k + 1;
     }
-    return smells;
+  }
+
+  // Replay the journey from the very beginning up to `target`.
+  //
+  // Why this exists: "Verify path" runs every action back-to-back and works, but
+  // a REPLAY-AND-SCAN runs a full scan between checkpoints — axe, a full-page
+  // screenshot, a tab walk, and (when enabled) the interaction pass, which opens
+  // modals, presses Escape and fills forms. Even with reversal that is best
+  // effort, so by the next checkpoint the page can be in a state the recording
+  // never saw, and the next click cannot find its element. Re-driving from the
+  // start restores exactly the conditions Verify path enjoys.
+  async function redrive(page, target, collect) {
+    state.redrives++;
+    onLog(`Page drifted after scanning — replaying the journey from the start to recover.`);
+    cursor = 0;
+    const first = steps[0];
+    const home = (first && first.type === "navigate" && first.url) || recording.startUrl;
+    if (home) {
+      await page.goto(home, { waitUntil: "domcontentloaded", timeout: 20000 }).catch(() => {});
+      await settle(page);
+    }
+    await runRange(page, 0, target, collect);
   }
 
   async function navigator(i, page) {
     const ci = checkpoints[i];
     if (ci == null) { state.done = true; return null; }
-    const smells = await advanceTo(page, ci);
+    const smells = [];
+    try {
+      // Fast path: continue from where we are.
+      await runRange(page, cursor, ci, smells);
+    } catch (e) {
+      // Slow path: the scan disturbed the page. Start over and drive to here.
+      onLog(`Checkpoint ${i + 1}: ${String(e.message ?? e).slice(0, 120)}`);
+      smells.length = 0;
+      await redrive(page, ci, smells);
+    }
     const url = page.url();
     const title = await page.title().catch(() => "");
     if (i === checkpoints.length - 1) state.done = true;
