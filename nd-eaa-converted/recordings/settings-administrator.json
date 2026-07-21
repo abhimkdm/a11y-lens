@@ -1,0 +1,65 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.426Z",
+  "name": "Settings - administrator",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/settings/account-access",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": true,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/settings/account-access",
+      "title": "Settings - administrator",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/settings/account-access",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/ecare/settings/account-access",
+        "regexPattern": "^/ecare/settings/account-access/?$",
+        "params": {},
+        "query": {},
+        "hasParams": false,
+        "heading": "Settings - administrator"
+      }
+    },
+    {
+      "i": 1,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Tilføj administrator"
+          },
+          {
+            "by": "text",
+            "value": "Tilføj administrator"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Tilføj administrator",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    1
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/settings/account-access",
+      "title": "Settings - administrator"
+    }
+  ]
+}

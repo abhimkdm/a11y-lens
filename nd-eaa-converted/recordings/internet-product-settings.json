@@ -1,0 +1,40 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.422Z",
+  "name": "Internet product - settings",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/2f2cd71e-0437-4ba9-b02f-8bdba0ed08ce/settings",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": true,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/2f2cd71e-0437-4ba9-b02f-8bdba0ed08ce/settings",
+      "title": "Internet product - settings",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/2f2cd71e-0437-4ba9-b02f-8bdba0ed08ce/settings",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/ecare/products/{productUuid}/settings",
+        "regexPattern": "^/ecare/products/[^/]+/settings/?$",
+        "params": {
+          "productUuid": "2f2cd71e-0437-4ba9-b02f-8bdba0ed08ce"
+        },
+        "query": {},
+        "hasParams": true,
+        "heading": "Internet product - settings"
+      }
+    }
+  ],
+  "checkpoints": [
+    0
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/2f2cd71e-0437-4ba9-b02f-8bdba0ed08ce/settings",
+      "title": "Internet product - settings"
+    }
+  ]
+}

@@ -1,0 +1,197 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.426Z",
+  "name": "Settings - notifications & consents",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/settings/notifications-consents",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": true,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/settings/notifications-consents",
+      "title": "Settings - notifications & consents",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/settings/notifications-consents",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/ecare/settings/notifications-consents",
+        "regexPattern": "^/ecare/settings/notifications-consents/?$",
+        "params": {},
+        "query": {},
+        "hasParams": false,
+        "heading": "Settings - notifications & consents"
+      }
+    },
+    {
+      "i": 1,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": ":nth-match(:is(a, button, [role=\"button\"]):has-text(\"Redigér\"), 1)"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 2,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "role",
+            "role": "button",
+            "name": "luk"
+          },
+          {
+            "by": "css",
+            "value": ".MuiDrawer-root :is(button[aria-label=\"luk\"], button:has([data-testid=\"CloseIcon\"]), button:has-text(\"Annuller\"), button:has-text(\"Luk\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 3,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": ":nth-match(:is(a, button, [role=\"button\"]):has-text(\"Redigér\"), 2)"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 4,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "role",
+            "role": "button",
+            "name": "luk"
+          },
+          {
+            "by": "css",
+            "value": ".MuiDrawer-root :is(button[aria-label=\"luk\"], button:has([data-testid=\"CloseIcon\"]), button:has-text(\"Annuller\"), button:has-text(\"Luk\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 5,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "a",
+            "value": "Opret"
+          },
+          {
+            "by": "text",
+            "value": "Opret"
+          },
+          {
+            "by": "css",
+            "value": "a"
+          }
+        ],
+        "name": "Opret",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 6,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "role",
+            "role": "button",
+            "name": "luk"
+          },
+          {
+            "by": "css",
+            "value": ".MuiDrawer-root :is(button[aria-label=\"luk\"], button:has([data-testid=\"CloseIcon\"]), button:has-text(\"Annuller\"), button:has-text(\"Luk\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 7,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": ":nth-match(:is(a, button, [role=\"button\"]):has-text(\"Redigér\"), 3)"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    1,
+    3,
+    5,
+    7
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/settings/notifications-consents",
+      "title": "Settings - notifications & consents"
+    }
+  ]
+}

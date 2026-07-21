@@ -1,0 +1,146 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.424Z",
+  "name": "Product - settings calling features",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/settings/calling-features",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": true,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/settings/calling-features",
+      "title": "Product - settings calling features",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/settings/calling-features",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/ecare/products/{productUuid}/settings/calling-features",
+        "regexPattern": "^/ecare/products/[^/]+/settings/calling-features/?$",
+        "params": {
+          "productUuid": "16bbbcda-e921-4868-bc29-c5d14397627f"
+        },
+        "query": {},
+        "hasParams": true,
+        "heading": "Product - settings calling features"
+      }
+    },
+    {
+      "i": 1,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": ":nth-match(:is(a, button, [role=\"button\"]):has-text(\"Redigér\"), 1)"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 2,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "role",
+            "role": "button",
+            "name": "luk"
+          },
+          {
+            "by": "css",
+            "value": ".MuiDrawer-root :is(button[aria-label=\"luk\"], button:has([data-testid=\"CloseIcon\"]), button:has-text(\"Annuller\"), button:has-text(\"Luk\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 3,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": ":nth-match(:is(a, button, [role=\"button\"]):has-text(\"Redigér\"), 2)"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 4,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "role",
+            "role": "button",
+            "name": "luk"
+          },
+          {
+            "by": "css",
+            "value": ".MuiDrawer-root :is(button[aria-label=\"luk\"], button:has([data-testid=\"CloseIcon\"]), button:has-text(\"Annuller\"), button:has-text(\"Luk\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 5,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": ":nth-match(:is(a, button, [role=\"button\"]):has-text(\"Redigér\"), 3)"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    1,
+    3,
+    5
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/settings/calling-features",
+      "title": "Product - settings calling features"
+    }
+  ]
+}

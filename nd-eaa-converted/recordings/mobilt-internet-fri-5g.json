@@ -1,0 +1,67 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.428Z",
+  "name": "Mobilt internet - Fri 5G",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/mobilt-internet/mobilt-internet-fri-5g?modem=nuuday-h158-381-5g-mbb-router-udlaan",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": false,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/mobilt-internet/mobilt-internet-fri-5g?modem=nuuday-h158-381-5g-mbb-router-udlaan",
+      "title": "Mobilt internet - Fri 5G",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/mobilt-internet/mobilt-internet-fri-5g?modem=nuuday-h158-381-5g-mbb-router-udlaan",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/shop/mobilt-internet/mobilt-internet-fri-5g",
+        "regexPattern": "^/shop/mobilt-internet/mobilt-internet-fri-5g/?$",
+        "params": {},
+        "query": {
+          "modem": "nuuday-h158-381-5g-mbb-router-udlaan"
+        },
+        "hasParams": false,
+        "heading": "Mobilt internet - Fri 5G"
+      }
+    },
+    {
+      "i": 1,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Vælg router"
+          },
+          {
+            "by": "text",
+            "value": "Vælg router"
+          },
+          {
+            "by": "css",
+            "value": "button.taConfiguratorButton"
+          }
+        ],
+        "name": "Vælg router",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    1
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/mobilt-internet/mobilt-internet-fri-5g?modem=nuuday-h158-381-5g-mbb-router-udlaan",
+      "title": "Mobilt internet - Fri 5G"
+    }
+  ]
+}

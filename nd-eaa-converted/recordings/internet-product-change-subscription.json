@@ -1,0 +1,139 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.421Z",
+  "name": "Internet product - change subscription",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/2f2cd71e-0437-4ba9-b02f-8bdba0ed08ce/change-subscription",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": true,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/2f2cd71e-0437-4ba9-b02f-8bdba0ed08ce/change-subscription",
+      "title": "Internet product - change subscription",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/2f2cd71e-0437-4ba9-b02f-8bdba0ed08ce/change-subscription",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/ecare/products/{productUuid}/change-subscription",
+        "regexPattern": "^/ecare/products/[^/]+/change-subscription/?$",
+        "params": {
+          "productUuid": "2f2cd71e-0437-4ba9-b02f-8bdba0ed08ce"
+        },
+        "query": {},
+        "hasParams": true,
+        "heading": "Internet product - change subscription"
+      }
+    },
+    {
+      "i": 1,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Vis muligheder"
+          },
+          {
+            "by": "text",
+            "value": "Vis muligheder"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Vis muligheder",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 2,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": ":nth-match(button.subscription-card-button:has-text(\"Vælg\"), 1)"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 3,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Fortsæt"
+          },
+          {
+            "by": "text",
+            "value": "Fortsæt"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Fortsæt",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 4,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Fortsæt"
+          },
+          {
+            "by": "text",
+            "value": "Fortsæt"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Fortsæt",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/2f2cd71e-0437-4ba9-b02f-8bdba0ed08ce/change-subscription",
+      "title": "Internet product - change subscription"
+    }
+  ]
+}

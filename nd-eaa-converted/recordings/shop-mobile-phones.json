@@ -1,0 +1,145 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.428Z",
+  "name": "Shop - mobile phones",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/mobiltelefoner",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": false,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/mobiltelefoner",
+      "title": "Shop - mobile phones",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/mobiltelefoner",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/shop/mobiltelefoner",
+        "regexPattern": "^/shop/mobiltelefoner/?$",
+        "params": {},
+        "query": {},
+        "hasParams": false,
+        "heading": "Shop - mobile phones"
+      }
+    },
+    {
+      "i": 1,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "span",
+            "value": "Filter"
+          },
+          {
+            "by": "text",
+            "value": "Filter"
+          },
+          {
+            "by": "css",
+            "value": "span"
+          }
+        ],
+        "name": "Filter",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 2,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "span",
+            "value": "Mærke"
+          },
+          {
+            "by": "text",
+            "value": "Mærke"
+          },
+          {
+            "by": "css",
+            "value": "span"
+          }
+        ],
+        "name": "Mærke",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 3,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "role",
+            "role": "button",
+            "name": "luk"
+          },
+          {
+            "by": "css",
+            "value": ":is(.MuiDrawer-root, body) :is(button[aria-label=\"luk\"], button:has([data-testid=\"CloseIcon\"]), button[class*=\"modal_closeButton__\"], button:has-text(\"Annuller\"), button:has-text(\"Luk\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 4,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "span",
+            "value": "Mindstepris 6 mdr."
+          },
+          {
+            "by": "text",
+            "value": "Mindstepris 6 mdr."
+          },
+          {
+            "by": "css",
+            "value": "span"
+          }
+        ],
+        "name": "Mindstepris 6 mdr.",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    1,
+    2,
+    4
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/mobiltelefoner",
+      "title": "Shop - mobile phones"
+    }
+  ]
+}

@@ -1,0 +1,120 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.425Z",
+  "name": "Product - owner & user",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/owner-user",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": true,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/owner-user",
+      "title": "Product - owner & user",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/owner-user",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/ecare/products/{productUuid}/owner-user",
+        "regexPattern": "^/ecare/products/[^/]+/owner-user/?$",
+        "params": {
+          "productUuid": "16bbbcda-e921-4868-bc29-c5d14397627f"
+        },
+        "query": {},
+        "hasParams": true,
+        "heading": "Product - owner & user"
+      }
+    },
+    {
+      "i": 1,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Tilføj bruger"
+          },
+          {
+            "by": "text",
+            "value": "Tilføj bruger"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Tilføj bruger",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 2,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "role",
+            "role": "button",
+            "name": "luk"
+          },
+          {
+            "by": "css",
+            "value": ".MuiDrawer-root :is(button[aria-label=\"luk\"], button:has([data-testid=\"CloseIcon\"]), button:has-text(\"Annuller\"), button:has-text(\"Luk\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 3,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Skift ejer"
+          },
+          {
+            "by": "text",
+            "value": "Skift ejer"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Skift ejer",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    1,
+    3
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/owner-user",
+      "title": "Product - owner & user"
+    }
+  ]
+}

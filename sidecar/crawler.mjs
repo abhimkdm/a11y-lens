@@ -45,6 +45,9 @@ export function createCrawler() {
     unitsDone: 0,
     unitsTotal: 0,
     stage: "scanning",  // scanning -> deduping -> reporting -> done
+    // Where a URL list actually ended up, so the report can distinguish
+    // "scanned 37 pages" from "requested 37 and reached 31".
+    redirects: { list: [], failed: [], auth: 0, warned: false },
   };
 
   function log(msg) {
@@ -107,10 +110,18 @@ export function createCrawler() {
     }
   }
 
+  // Paths that mean "you are not logged in", in the languages this tool meets.
+  const AUTH_RE = /(^|\/)(login|signin|sign-in|log-in|auth|sso|oauth|account\/login|logon|identity|adfs|saml)(\/|$|\?)/i;
+
   async function scanPage(page, opts = {}) {
     await page.evaluate(axeSource);
-    const results = await page.evaluate(async () =>
-      window.axe.run(document, {
+    // Third-party widget DOM (cookie banners, chat, analytics) can be excluded so
+    // a scan's SCOPE matches another suite's. Kept opt-in and off by default:
+    // silently hiding a cookie banner would understate real barriers, and a
+    // consent dialog you cannot dismiss with a keyboard is a genuine defect.
+    const exclude = Array.isArray(opts.excludeSelectors) ? opts.excludeSelectors : [];
+    const results = await page.evaluate(async (excl) =>
+      window.axe.run(excl.length ? { exclude: excl.map((s) => [s]) } : document, {
         runOnly: {
           type: "tag",
           // WCAG 2.1 Level A + AA only — the target standard.
@@ -120,7 +131,7 @@ export function createCrawler() {
           values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"],
         },
         resultTypes: ["violations"],
-      })
+      }), exclude
     );
     const violations = results.violations.map(v => ({
       id: v.id, impact: v.impact ?? "minor", description: v.description, help: v.help,
@@ -173,12 +184,13 @@ export function createCrawler() {
     state.pageShots = {};   // scan-row key -> { shot(base64), w, h } (one full-page shot per row)
     state.unitsDone = 0;
     state.unitsTotal = 0;
+    state.redirects = { list: [], failed: [], auth: 0, warned: false };
     state.stage = "scanning";
     state.log = [];
     state.error = null;
     state.result = null;
 
-    function recordScan(url, title, violations, keyboard = null) {
+    function recordScan(url, title, violations, keyboard = null, meta = {}) {
       const u = new URL(url);
       // One screenshot per scan row (page or interaction-revealed state), named by
       // the row so a drawer's state doesn't overwrite the base page's image.
@@ -222,6 +234,10 @@ export function createCrawler() {
         // Keyboard/focus evidence is per-page too: focus order on checkout is a
         // different thing from focus order on the front page.
         keyboard,
+        // What was ASKED for vs what was actually scanned — a redirect makes
+        // those two different, and the report must not conflate them.
+        requestedUrl: meta.requestedUrl ?? url,
+        redirected: !!meta.redirected,
       });
     }
 
@@ -400,18 +416,63 @@ export function createCrawler() {
             await page.goto(target.href, { waitUntil: "domcontentloaded", timeout: 20000 });
           } catch (e) {
             log(`Navigation failed for ${trimmed}: ${String(e).slice(0, 100)}`);
+            state.redirects.failed.push({ requested: target.href, reason: String(e).slice(0, 80) });
             continue;
           }
           await page.waitForTimeout(500);
+
+          // Did we actually ARRIVE? A URL list is a list of REQUESTS, not results.
+          // An expired session, a permission check or a canonical redirect can land
+          // us somewhere else entirely — and scanning that under the requested URL
+          // produces a report that looks complete and is quietly wrong.
+          const landed = new URL(page.url());
+          const sameRoute = landed.origin === target.origin && landed.pathname === target.pathname;
+          if (!sameRoute) {
+            const landedKey = landed.origin + landed.pathname;
+            const authish = AUTH_RE.test(landed.pathname) || AUTH_RE.test(landed.search);
+            state.redirects.list.push({ requested: target.href, landed: landed.href, auth: authish });
+
+            if (authish) {
+              state.redirects.auth++;
+              log(`⚠ ${target.pathname} redirected to a login/auth page (${landed.pathname}) — not scanned.`);
+              // Many auth redirects in a row means the session is gone. Continuing
+              // would fill the report with copies of the login screen.
+              if (state.redirects.auth >= 3 && !state.redirects.warned) {
+                state.redirects.warned = true;
+                state.error = state.error ||
+                  `${state.redirects.auth} URLs redirected to login — the browser session is not authenticated for these pages. Log in again and re-run.`;
+                log(`✖ Stopping the URL list: the session does not have access to these pages.`);
+                break;
+              }
+              continue;
+            }
+
+            // A non-auth redirect is legitimate (canonical URL, locale, tenant).
+            // Scan where we landed, but record it under the URL that was actually
+            // scanned and skip it if we have already been there.
+            if (visited.has(landedKey)) {
+              log(`↪ ${target.pathname} redirects to ${landed.pathname}, already scanned — skipped.`);
+              continue;
+            }
+            visited.add(landedKey);
+            log(`↪ ${target.pathname} redirected to ${landed.pathname} — scanning the destination.`);
+          }
+
+          const scannedUrl = sameRoute ? target.href : page.url();
           const title = await page.title().catch(() => "");
           log(`Scanning: ${title || pageKey}`);
-          const violations = await scanPage(page, { elementScreenshots: opts.elementScreenshots });
+          const violations = await scanPage(page, {
+            elementScreenshots: opts.elementScreenshots,
+            excludeSelectors: opts.excludeSelectors,
+          });
           const kb = opts.keyboardEvidence === false
             ? null
             : await captureKeyboardEvidence(page).catch(() => null);
-          const aiFindings = await runAiAudit(page, target.href, violations, kb);
-          recordScan(target.href, title, [...violations, ...aiFindings], kb);
-          await runInteractionPass(page, target.href, title);
+          const aiFindings = await runAiAudit(page, scannedUrl, violations, kb);
+          recordScan(scannedUrl, title, [...violations, ...aiFindings], kb, {
+            requestedUrl: target.href, redirected: !sameRoute,
+          });
+          await runInteractionPass(page, scannedUrl, title);
           state.unitsDone++;
         }
       } else {
@@ -474,6 +535,9 @@ export function createCrawler() {
         timestamp: new Date().toISOString(), score: avg, counts, violations,
         pages: state.pagesScanned,
         pageShots: state.pageShots,   // pathname+search -> { shot, w, h }
+        // What a URL list actually reached. Without this a report saying
+        // "31 pages" hides that 6 were requested and never scanned.
+        redirects: state.redirects,
       };
       // When AI Full Scan ran, attach the token usage + priced cost across every
       // page it audited, so the AI cost report can bill the whole crawl as one job.
@@ -519,6 +583,19 @@ export function createCrawler() {
         };
         state.result.usage = state.aiUsage;
         state.result.cost = cost;
+        // Reconcile requested vs reached BEFORE the totals, so nobody reads
+        // "31 pages scanned" as "all 37 URLs were covered".
+        const rd = state.redirects;
+        if (rd && (rd.list.length || rd.failed.length)) {
+          const reached = state.pagesScanned.filter((p) => !/— Interaction:/.test(p.title || "")).length;
+          log(`URL list: ${state.unitsTotal} requested · ${reached} scanned · ${rd.list.length} redirected · ${rd.failed.length} unreachable.`);
+          if (rd.auth) log(`  ${rd.auth} redirected to login — those pages were NOT scanned.`);
+          for (const r of rd.list.slice(0, 8)) {
+            try {
+              log(`  ↪ ${new URL(r.requested).pathname} → ${new URL(r.landed).pathname}${r.auth ? "  (auth)" : ""}`);
+            } catch { /* ignore */ }
+          }
+        }
         const stateNote = state.aiAuditStates ? ` + ${state.aiAuditStates} revealed state(s)` : "";
         log(`AI audit: ${state.aiAuditPages} pages${stateNote}, ${state.aiUsage.inputTokens + state.aiUsage.outputTokens} tokens, ${cost.usd === null ? "unpriced" : "$" + (cost.usd ?? 0).toFixed(4)}.`);
       }

@@ -1,0 +1,252 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.425Z",
+  "name": "Product - sim card",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/sim-card",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": true,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/sim-card",
+      "title": "Product - sim card",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/sim-card",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/ecare/products/{productUuid}/sim-card",
+        "regexPattern": "^/ecare/products/[^/]+/sim-card/?$",
+        "params": {
+          "productUuid": "16bbbcda-e921-4868-bc29-c5d14397627f"
+        },
+        "query": {},
+        "hasParams": true,
+        "heading": "Product - sim card"
+      }
+    },
+    {
+      "i": 1,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "*",
+            "value": "Vis QR-kode"
+          },
+          {
+            "by": "text",
+            "value": "Vis QR-kode"
+          },
+          {
+            "by": "css",
+            "value": ":is(a, button, [role=\"button\"])"
+          }
+        ],
+        "name": "Vis QR-kode",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 2,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "role",
+            "role": "button",
+            "name": "luk"
+          },
+          {
+            "by": "css",
+            "value": ".MuiDrawer-root :is(button[aria-label=\"luk\"], button:has([data-testid=\"CloseIcon\"]), button:has-text(\"Annuller\"), button:has-text(\"Luk\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 3,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "*",
+            "value": "Bestil nyt simkort"
+          },
+          {
+            "by": "text",
+            "value": "Bestil nyt simkort"
+          },
+          {
+            "by": "css",
+            "value": ":is(a, button, [role=\"button\"])"
+          }
+        ],
+        "name": "Bestil nyt simkort",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 4,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "role",
+            "role": "button",
+            "name": "Close teaser message"
+          },
+          {
+            "by": "css",
+            "value": "[aria-label=\"Close teaser message\"]"
+          }
+        ],
+        "name": "Close teaser message",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 5,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": ".radio-card-small"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 6,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Næste"
+          },
+          {
+            "by": "text",
+            "value": "Næste"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Næste",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 7,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Tilbage"
+          },
+          {
+            "by": "text",
+            "value": "Tilbage"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Tilbage",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 8,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "text",
+            "value": "/Fysisk simkort.*(Levering: 3-5|3-5)/"
+          }
+        ],
+        "name": "/Fysisk simkort.*(Levering: 3-5|3-5)/",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 9,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Næste"
+          },
+          {
+            "by": "text",
+            "value": "Næste"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Næste",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    1,
+    3,
+    6,
+    9
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/sim-card",
+      "title": "Product - sim card"
+    }
+  ]
+}

@@ -1,3 +1,5 @@
+import { templatize } from "./url-template.mjs";
+
 // A11y Lens path recorder (v2 — action capture).
 //
 // v1 recorded only the ORDERED LIST OF URLs a QA person visited. That is fine
@@ -227,6 +229,73 @@ export const CAPTURE_SRC = `(() => {
     return out;
   }
 
+    // DOM fingerprint — the identity a healer can match against when EVERY recorded
+  // selector is dead. Deliberately structural + semantic, never positional-only:
+  // parent context and sibling labels survive a class rename or a re-wrap, which
+  // is precisely when a CSS path stops working.
+  function axChain(el){
+    var out=[], node=el.parentElement, hops=0;
+    while(node && hops<8){
+      var r=role(node);
+      if(r && r!=='none' && r!=='presentation'){
+        var n=accName(node);
+        out.unshift(n ? r+':'+n.slice(0,32) : r);
+        if(out.length>=4) break;
+      }
+      node=node.parentElement; hops++;
+    }
+    return out;
+  }
+
+  function axStates(el){
+    var st={};
+    if(el.disabled===true || el.getAttribute('aria-disabled')==='true') st.disabled=true;
+    var exp=attr(el,'aria-expanded'); if(exp!==null) st.expanded=exp==='true';
+    var chk=attr(el,'aria-checked'); if(chk!==null) st.checked=chk==='true';
+    else if(typeof el.checked==='boolean' && (el.type==='checkbox'||el.type==='radio')) st.checked=el.checked;
+    var sel2=attr(el,'aria-selected'); if(sel2!==null) st.selected=sel2==='true';
+    var lvl=attr(el,'aria-level'); if(lvl) st.level=parseInt(lvl,10)||undefined;
+    return st;
+  }
+
+  function fingerprint(el){
+    var parent = el.parentElement;
+    var sibs = [];
+    if(parent){
+      for(var i=0;i<parent.children.length && sibs.length<6;i++){
+        var c=parent.children[i];
+        if(c===el) continue;
+        var n=accName(c)||clean(c.textContent);
+        if(n) sibs.push(n.slice(0,40));
+      }
+    }
+    var idx=0;
+    if(parent){ for(var j=0;j<parent.children.length;j++){ if(parent.children[j]===el){ idx=j; break; } } }
+    var section='';
+    var sec = el.closest ? el.closest('section,[role=region],[role=dialog],main,form,nav,header,footer') : null;
+    if(sec){
+      var h = sec.querySelector('h1,h2,h3,legend,[role=heading]');
+      section = h ? clean(h.textContent).slice(0,60) : (sec.getAttribute('aria-label')||sec.tagName.toLowerCase());
+    }
+    return {
+      tag: el.tagName ? el.tagName.toLowerCase() : '',
+      role: role(el),
+      name: accName(el),
+      text: clean(el.textContent).slice(0,60),
+      parentText: parent ? clean(parent.textContent).slice(0,90) : '',
+      section: section,
+      siblings: sibs,
+      index: idx,
+      type: attr(el,'type')||'',
+      href: attr(el,'href')||'',
+      page: location.pathname,
+      // Accessibility-tree identity. The a11y tree changes far less often than the
+      // DOM: a re-wrap or class rename leaves role/name/state intact, so this is
+      // the strongest signal a healer has after the accessible name itself.
+      ax: { chain: axChain(el), states: axStates(el) }
+    };
+  }
+
   function describe(el){
     var t = clean(el.textContent);
     return {
@@ -235,9 +304,35 @@ export const CAPTURE_SRC = `(() => {
       tag:el.tagName?el.tagName.toLowerCase():'',
       text: t ? t.slice(0,80) : '',                 // for readable failure messages
       testid: attr(el,'data-testid') || attr(el,'data-test') || attr(el,'data-qa') || null,
+      fingerprint: fingerprint(el),                 // used by the healer
     };
   }
+  // React Router context, when the app exposes it. A route NAME is the most
+  // durable navigation target there is — it survives the path itself being
+  // renamed — so we take it when we can get it and fall back to the URL when not.
+  function routerInfo(){
+    try {
+      var out = {};
+      // Router libraries commonly leave the matched route on the history state,
+      // or expose it via a data attribute the app sets.
+      var st = window.history && window.history.state;
+      if(st && typeof st === 'object'){
+        if(st.routeName) out.routeName = String(st.routeName).slice(0,80);
+        if(st.key) out.historyKey = String(st.key).slice(0,40);
+      }
+      var el = document.querySelector('[data-route-name],[data-route],[data-page-name]');
+      if(el) out.routeName = out.routeName || (el.getAttribute('data-route-name')||el.getAttribute('data-route')||el.getAttribute('data-page-name'));
+      var h1 = document.querySelector('h1,[role=heading][aria-level="1"]');
+      if(h1) out.heading = clean(h1.textContent).slice(0,80);
+      out.title = clean(document.title).slice(0,80);
+      return out;
+    } catch(e){ return {}; }
+  }
+
   function send(step){ try { if(window.__a11yRecordStep) window.__a11yRecordStep(step); } catch(e){} }
+
+  // Expose router context to the Node side for navigation steps.
+  window.__a11yRouteInfo = routerInfo;
 
   document.addEventListener('click', function(e){
     if(!e.isTrusted) return;
@@ -347,7 +442,9 @@ export function createRecorder() {
       try { state.origin = new URL(initialUrl).origin; } catch { /* ignore */ }
       pushEntry(initialUrl, title);
       // First navigate is always "manual" — replay must goto it to reach the start.
-      pushStep({ type: "navigate", url: initialUrl, title, manual: true, checkpoint: true, ts: Date.now() });
+      const meta0 = templatize(initialUrl);
+      pushStep({ type: "navigate", url: initialUrl, title, manual: true, checkpoint: true, ts: Date.now(),
+                 urlMeta: { ...meta0, heading: title } });
     }
 
     listener_setup: {
@@ -363,7 +460,13 @@ export function createRecorder() {
           // must NOT goto (that would double-navigate / break SPA state). If it
           // did not follow an action, the user typed a URL or reloaded → goto.
           const caused = (Date.now() - lastActionTs) < 2000;
-          pushStep({ type: "navigate", url, title, manual: !caused, caused, checkpoint: true, ts: Date.now() });
+          // Abstract the URL so replay does not depend on this session's ids.
+          const meta = templatize(url);
+          const route = await boundPage.evaluate(() => (window.__a11yRouteInfo ? window.__a11yRouteInfo() : {})).catch(() => ({}));
+          pushStep({
+            type: "navigate", url, title, manual: !caused, caused, checkpoint: true, ts: Date.now(),
+            urlMeta: { ...meta, routeName: route?.routeName, heading: route?.heading || title },
+          });
         } catch { /* page may be tearing down mid-event */ }
       };
       boundPage.on("framenavigated", navListener);

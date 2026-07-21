@@ -1,0 +1,523 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.426Z",
+  "name": "Checkout",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/checkout",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": true,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/checkout",
+      "title": "Checkout",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/checkout",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/checkout",
+        "regexPattern": "^/checkout/?$",
+        "params": {},
+        "query": {},
+        "hasParams": false,
+        "heading": "Checkout"
+      }
+    },
+    {
+      "i": 1,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "role",
+            "role": "button",
+            "name": "luk"
+          },
+          {
+            "by": "css",
+            "value": ".MuiDrawer-root :is(button[aria-label=\"luk\"], button:has([data-testid=\"CloseIcon\"]), button:has-text(\"Annuller\"), button:has-text(\"Luk\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 2,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Læg i kurv"
+          },
+          {
+            "by": "text",
+            "value": "Læg i kurv"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Læg i kurv",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 3,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "*",
+            "value": "Nej, jeg har ikke nogle"
+          },
+          {
+            "by": "text",
+            "value": "Nej, jeg har ikke nogle"
+          },
+          {
+            "by": "css",
+            "value": "[role=\"button\"]"
+          }
+        ],
+        "name": "Nej, jeg har ikke nogle",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 4,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "*",
+            "value": "Fortsæt\"), a:has-text(\"Fortsæt"
+          },
+          {
+            "by": "text",
+            "value": "Fortsæt\"), a:has-text(\"Fortsæt"
+          },
+          {
+            "by": "css",
+            "value": "[role=\"link\"]"
+          }
+        ],
+        "name": "Fortsæt\"), a:has-text(\"Fortsæt",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 5,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "*",
+            "value": "Vælg nyt nummer"
+          },
+          {
+            "by": "text",
+            "value": "Vælg nyt nummer"
+          },
+          {
+            "by": "css",
+            "value": "[role=\"tab\"]"
+          }
+        ],
+        "name": "Vælg nyt nummer",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 6,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Næste"
+          },
+          {
+            "by": "text",
+            "value": "Næste"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Næste",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 7,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Næste"
+          },
+          {
+            "by": "text",
+            "value": "Næste"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Næste",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 8,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": ":text(\"Bemærk, du betaler selvfø\")"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 9,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Næste"
+          },
+          {
+            "by": "text",
+            "value": "Næste"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Næste",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 10,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Næste"
+          },
+          {
+            "by": "text",
+            "value": "Næste"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Næste",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 11,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Næste"
+          },
+          {
+            "by": "text",
+            "value": "Næste"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Næste",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 12,
+      "type": "check",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": "input[type=\"checkbox\"]:near(:text(\"Jeg giver samtykke til, at\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 13,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Bekræft med MitID"
+          },
+          {
+            "by": "text",
+            "value": "Bekræft med MitID"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Bekræft med MitID",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 14,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Næste"
+          },
+          {
+            "by": "text",
+            "value": "Næste"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Næste",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 15,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Afhent i YouSee butik"
+          },
+          {
+            "by": "text",
+            "value": "Afhent i YouSee butik"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Afhent i YouSee butik",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 16,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Cylindervej 14"
+          },
+          {
+            "by": "text",
+            "value": "Cylindervej 14"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Cylindervej 14",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 17,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Næste"
+          },
+          {
+            "by": "text",
+            "value": "Næste"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Næste",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 18,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Næste"
+          },
+          {
+            "by": "text",
+            "value": "Næste"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Næste",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 19,
+      "type": "check",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": "input[type=\"checkbox\"]:near(:text(\"Jeg accepterer YouSee's\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 20,
+      "type": "check",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": "input[type=\"checkbox\"]:near(:text(\"Jeg accepterer, at YouSee\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    5,
+    6,
+    8,
+    9,
+    10,
+    11,
+    13,
+    14,
+    16,
+    20
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/checkout",
+      "title": "Checkout"
+    }
+  ]
+}

@@ -42,13 +42,15 @@ export async function waitForSidecar(timeoutMs = 20000): Promise<boolean> {
 }
 
 export const api = {
-  openSession: (url?: string) =>
+  browsers: () => req(`${BASE}/browsers`),
+  openSession: (url?: string, browser?: string) =>
     req(`${BASE}/session/open`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({ url, browser }),
     }),
   status: () => req(`${BASE}/session/status`),
+  closeSession: () => req(`${BASE}/session/close`, { method: "POST" }),
 
   recordStart: () => req(`${BASE}/record/start`, { method: "POST" }),
   recordStop: () => req(`${BASE}/record/stop`, { method: "POST" }),
@@ -274,6 +276,11 @@ export const api = {
     }),
 
   browserStatus: () => req(`${BASE}/browser/status`),
+  installBrowsers: (browsers: string[]) =>
+    req(`${BASE}/browser/install`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ browsers }),
+    }),
   browserInstall: () => req(`${BASE}/browser/install`, { method: "POST" }),
   browserInstallStatus: () => req(`${BASE}/browser/install/status`),
 

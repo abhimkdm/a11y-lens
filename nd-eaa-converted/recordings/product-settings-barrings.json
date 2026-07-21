@@ -1,0 +1,58 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.423Z",
+  "name": "Product - settings barrings",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/settings/barrings",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": true,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/settings/barrings",
+      "title": "Product - settings barrings",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/settings/barrings",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/ecare/products/{productUuid}/settings/barrings",
+        "regexPattern": "^/ecare/products/[^/]+/settings/barrings/?$",
+        "params": {
+          "productUuid": "16bbbcda-e921-4868-bc29-c5d14397627f"
+        },
+        "query": {},
+        "hasParams": true,
+        "heading": "Product - settings barrings"
+      }
+    },
+    {
+      "i": 1,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": ":nth-match(:is(a, button, [role=\"button\"]):has-text(\"Redigér\"), 1)"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    1
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/settings/barrings",
+      "title": "Product - settings barrings"
+    }
+  ]
+}

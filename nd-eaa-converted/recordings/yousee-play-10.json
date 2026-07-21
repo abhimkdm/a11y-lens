@@ -1,0 +1,174 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.430Z",
+  "name": "YouSee Play 10",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/tv/yousee-play",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": false,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/tv/yousee-play",
+      "title": "YouSee Play 10",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/tv/yousee-play",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/shop/tv/yousee-play",
+        "regexPattern": "^/shop/tv/yousee-play/?$",
+        "params": {},
+        "query": {},
+        "hasParams": false,
+        "heading": "YouSee Play 10"
+      }
+    },
+    {
+      "i": 1,
+      "type": "fill",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "location-search"
+          },
+          {
+            "by": "css",
+            "value": "[data-testid=\"location-search\"]"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "value": "Cylindervej 14"
+    },
+    {
+      "i": 2,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": "[role=\"listbox\"] [role=\"option\"]:first-child"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 3,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": "a[href*=\"10\"]"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 4,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Vælg, hvordan du vil se tv"
+          },
+          {
+            "by": "text",
+            "value": "Vælg, hvordan du vil se tv"
+          },
+          {
+            "by": "css",
+            "value": "button.taConfiguratorButton"
+          }
+        ],
+        "name": "Vælg, hvordan du vil se tv",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 5,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "role",
+            "role": "button",
+            "name": "luk"
+          },
+          {
+            "by": "css",
+            "value": ".MuiDrawer-root :is(button[aria-label=\"luk\"], button:has([data-testid=\"CloseIcon\"]), button:has-text(\"Annuller\"), button:has-text(\"Luk\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 6,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Vil du se tv i flere rum"
+          },
+          {
+            "by": "text",
+            "value": "Vil du se tv i flere rum"
+          },
+          {
+            "by": "css",
+            "value": "button.taConfiguratorButton"
+          }
+        ],
+        "name": "Vil du se tv i flere rum",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    3,
+    4,
+    6
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/tv/yousee-play",
+      "title": "YouSee Play 10"
+    }
+  ]
+}

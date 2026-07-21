@@ -1,0 +1,228 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.429Z",
+  "name": "Phone product page - Galaxy S26",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/mobiltelefoner/samsung/galaxy-s26/256gb-cobalt-violet?plan=50-gb-mobil&installments=none&insurance=none",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": false,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/mobiltelefoner/samsung/galaxy-s26/256gb-cobalt-violet?plan=50-gb-mobil&installments=none&insurance=none",
+      "title": "Phone product page - Galaxy S26",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/mobiltelefoner/samsung/galaxy-s26/256gb-cobalt-violet?plan=50-gb-mobil&installments=none&insurance=none",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/shop/mobiltelefoner/samsung/galaxy-s26/256gb-cobalt-violet",
+        "regexPattern": "^/shop/mobiltelefoner/samsung/galaxy-s26/256gb-cobalt-violet/?$",
+        "params": {},
+        "query": {
+          "plan": "50-gb-mobil",
+          "installments": "none",
+          "insurance": "none"
+        },
+        "hasParams": false,
+        "heading": "Phone product page - Galaxy S26"
+      }
+    },
+    {
+      "i": 1,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Vælg størrelse"
+          },
+          {
+            "by": "text",
+            "value": "Vælg størrelse"
+          },
+          {
+            "by": "css",
+            "value": "button.taConfiguratorButton"
+          }
+        ],
+        "name": "Vælg størrelse",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 2,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "role",
+            "role": "button",
+            "name": "luk"
+          },
+          {
+            "by": "css",
+            "value": ".MuiDrawer-root :is(button[aria-label=\"luk\"], button:has([data-testid=\"CloseIcon\"]), button:has-text(\"Annuller\"), button:has-text(\"Luk\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 3,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Abonnement"
+          },
+          {
+            "by": "text",
+            "value": "Abonnement"
+          },
+          {
+            "by": "css",
+            "value": "button.taConfiguratorButton"
+          }
+        ],
+        "name": "Abonnement",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 4,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "role",
+            "role": "button",
+            "name": "luk"
+          },
+          {
+            "by": "css",
+            "value": ".MuiDrawer-root :is(button[aria-label=\"luk\"], button:has([data-testid=\"CloseIcon\"]), button:has-text(\"Annuller\"), button:has-text(\"Luk\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 5,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Betalingsmetode"
+          },
+          {
+            "by": "text",
+            "value": "Betalingsmetode"
+          },
+          {
+            "by": "css",
+            "value": "button.taConfiguratorButton"
+          }
+        ],
+        "name": "Betalingsmetode",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 6,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "role",
+            "role": "button",
+            "name": "luk"
+          },
+          {
+            "by": "css",
+            "value": ".MuiDrawer-root :is(button[aria-label=\"luk\"], button:has([data-testid=\"CloseIcon\"]), button:has-text(\"Annuller\"), button:has-text(\"Luk\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 7,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Forsikring"
+          },
+          {
+            "by": "text",
+            "value": "Forsikring"
+          },
+          {
+            "by": "css",
+            "value": "button.taConfiguratorButton"
+          }
+        ],
+        "name": "Forsikring",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    1,
+    3,
+    5,
+    7
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/mobiltelefoner/samsung/galaxy-s26/256gb-cobalt-violet?plan=50-gb-mobil&installments=none&insurance=none",
+      "title": "Phone product page - Galaxy S26"
+    }
+  ]
+}

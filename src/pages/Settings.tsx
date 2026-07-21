@@ -8,7 +8,7 @@ import { api } from "../services/api";
 import { useAppStore } from "../store/useAppStore";
 import ContactCard from "../components/ContactCard";
 
-const PROVIDERS = ["ollama", "openai", "claude", "gemini", "kimi", "nvidia"];
+const PROVIDERS = ["ollama", "openai", "claude", "gemini", "kimi", "nvidia", "openrouter"];
 
 // The cross-check model is only used by the AI Expert Audit, which is currently
 // hidden behind SHOW_EXPERT_AUDIT in ScanCenter. Showing a config panel for a

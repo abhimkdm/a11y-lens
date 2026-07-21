@@ -20,6 +20,18 @@ export const AI_PROVIDER_DEFAULTS = {
     testModel: "meta/llama-3.1-8b-instruct",
     baseUrl: "https://integrate.api.nvidia.com/v1",
   },
+  // OpenRouter is an aggregator with an OpenAI-compatible endpoint, so it needs no
+  // special client — just a base URL. Model ids are namespaced ("vendor/model"),
+  // and ids ending in ":free" cost nothing but are rate limited by REQUEST COUNT,
+  // which is the constraint that matters here: an AI Full Scan issues one request
+  // per page AND per interaction-revealed state, so a large crawl exhausts a free
+  // daily allowance long before it exhausts any token budget. See the note in
+  // Settings. Paid ids on the same key have no such per-day cap.
+  openrouter: {
+    model: "openrouter/auto",
+    testModel: "openrouter/auto",
+    baseUrl: "https://openrouter.ai/api/v1",
+  },
 };
 
 function nonEmpty(value) {
@@ -41,6 +53,33 @@ export function resolveProviderFields(provider, { model, baseUrl, stored, test =
   return { model: resolvedModel, baseUrl: resolvedBaseUrl, defaults };
 }
 
+// Free/shared tiers throttle by REQUEST COUNT (OpenRouter: 20/min, 50/day on an
+// unfunded account). A scan issues one request per page and per revealed state, so
+// hitting 429 mid-crawl is normal rather than exceptional. Backing off keeps the
+// scan alive; failing fast would silently lose that page's findings entirely.
+export async function withRateLimitRetry(fn, { attempts = 3, onLog = () => {} } = {}) {
+  let wait = 4000;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const msg = String(e?.message ?? e);
+      const rateLimited = /\b429\b|rate.?limit|too many requests|quota/i.test(msg);
+      if (!rateLimited || i === attempts - 1) throw e;
+      const perDay = /per.?day|daily|quota exceeded/i.test(msg);
+      if (perDay) {
+        // A daily cap will not clear by waiting a few seconds — say so plainly
+        // instead of retrying into the same wall.
+        throw Object.assign(new Error(
+          `Daily request limit reached for this provider. ${msg.slice(0, 120)}`), { rateLimitDaily: true });
+      }
+      onLog(`Rate limited — waiting ${Math.round(wait / 1000)}s before retrying (attempt ${i + 2}/${attempts}).`);
+      await new Promise((r) => setTimeout(r, wait));
+      wait *= 2;
+    }
+  }
+}
+
 function extractApiError(status, body) {
   if (body?.error?.message) return body.error.message;
   if (body?.detail) return String(body.detail);
@@ -50,11 +89,17 @@ function extractApiError(status, body) {
 }
 
 async function openAiCompatChat({ baseUrl, apiKey, model, messages, maxTokens, responseFormat, timeoutMs = 120_000 }) {
+  if (!apiKey || !String(apiKey).trim()) {
+    throw new Error("No API key was supplied for this provider. Save the key in Settings, or paste it and test again.");
+  }
   if (!model) throw new Error("No model configured. Set one in Settings.");
   const body = { model, max_tokens: maxTokens, messages };
   if (responseFormat) body.response_format = responseFormat;
   const res = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
+    // An empty key here becomes `Authorization: Bearer ` — which providers reject
+    // with "Missing Authentication header", a message that sends people hunting
+    // through their account settings for a problem that is local.
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs),

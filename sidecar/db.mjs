@@ -109,6 +109,10 @@ db.exec(`
   );
 `);
 
+// The underlying SQLite handle, so modules that own their own table (the healing
+// memory) can create and query it without routing through these collections.
+export const rawDb = db;
+
 export const settings = {
   get(key) {
     const r = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);

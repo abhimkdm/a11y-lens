@@ -1,0 +1,210 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.424Z",
+  "name": "Mobile Product - change subscription",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/change-subscription",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": true,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/change-subscription",
+      "title": "Mobile Product - change subscription",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/change-subscription",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/ecare/products/{productUuid}/change-subscription",
+        "regexPattern": "^/ecare/products/[^/]+/change-subscription/?$",
+        "params": {
+          "productUuid": "16bbbcda-e921-4868-bc29-c5d14397627f"
+        },
+        "query": {},
+        "hasParams": true,
+        "heading": "Mobile Product - change subscription"
+      }
+    },
+    {
+      "i": 1,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": ":nth-match(button:has-text(\"Vælg\"), 4)"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 2,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "role",
+            "role": "button",
+            "name": "Close teaser message"
+          },
+          {
+            "by": "css",
+            "value": "[aria-label=\"Close teaser message\"]"
+          }
+        ],
+        "name": "Close teaser message",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 3,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Fortsæt"
+          },
+          {
+            "by": "text",
+            "value": "Fortsæt"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Fortsæt",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 4,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Fortsæt"
+          },
+          {
+            "by": "text",
+            "value": "Fortsæt"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Fortsæt",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 5,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": "label:has(h5:has-text(\"På en specifik dato\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 6,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": "input[placeholder=\"dd.mm.yyyy\"]"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 7,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": "[role=\"dialog\"] input[placeholder=\"dd.mm.yyyy\"]"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 8,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Fortsæt"
+          },
+          {
+            "by": "text",
+            "value": "Fortsæt"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Fortsæt",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    2,
+    3,
+    4,
+    6,
+    8
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/change-subscription",
+      "title": "Mobile Product - change subscription"
+    }
+  ]
+}

@@ -26,6 +26,7 @@ import ScoreRing from "../components/ScoreRing";
 import VerifyPathPanel from "../components/VerifyPathPanel";
 import AgentActivityPanel from "../components/AgentActivityPanel";
 import { saveFile } from "../utils/saveFile";
+import BrowserPicker from "../components/BrowserPicker";
 
 // Feature flag — the AI Expert Audit (incl. cross-check, probes, scope selector)
 // is fully built and tested but hidden from the UI for now. Flip to `true` to
@@ -116,6 +117,9 @@ export default function ScanCenter() {
   const [valueProfileText, setValueProfileText] = useState("");
   const [valueProfileError, setValueProfileError] = useState("");
 
+  // Which engine the session runs in. Chrome by default; Gecko/WebKit are where
+  // the genuinely different accessibility findings come from.
+  const [browserId, setBrowserId] = useState("chrome");
   const [recording, setRecording] = useState(false);
   const [recordedCount, setRecordedCount] = useState(0);
   const recordPollRef = useRef<number | null>(null);
@@ -245,6 +249,28 @@ export default function ScanCenter() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingUrlList]);
 
+  // The user can close the browser window whenever they like. Poll the sidecar so
+  // "Session open" reflects the actual window rather than the last thing we did,
+  // and so the engine picker unlocks again once it is gone.
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      const st = await api.status().catch(() => null);
+      if (!alive || !st) return;
+      setSessionOpen(!!st.open);
+    };
+    tick();
+    const id = window.setInterval(tick, 3000);
+    return () => { alive = false; clearInterval(id); };
+  }, [setSessionOpen]);
+
+  const closeSession = async () => {
+    setError(""); setNotice("");
+    await api.closeSession().catch(() => null);
+    setSessionOpen(false);
+    setNotice("Browser session closed. You can pick a different engine now.");
+  };
+
   const stopPolling = () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
   useEffect(() => () => {
     stopPolling();
@@ -344,7 +370,7 @@ export default function ScanCenter() {
 
   const open = async () => {
     setError("");
-    const r = await api.openSession(applicationUrl).catch((e) => ({ ok: false, error: String(e) }));
+    const r = await api.openSession(applicationUrl, browserId).catch((e) => ({ ok: false, error: String(e) }));
     if (r.ok) setSessionOpen(true);
     else setError(r.error ?? "Could not reach the sidecar. Run: npm run sidecar");
   };
@@ -390,10 +416,24 @@ export default function ScanCenter() {
             Open browser
           </Button>
         </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-          A visible Chrome window opens. Log in manually — your credentials never leave the browser.
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }} component="div">
+          A visible browser window opens. Log in manually — your credentials never leave the browser.
           {sessionOpen && <Chip size="small" color="success" label="Session open" sx={{ ml: 1 }} />}
+          {sessionOpen && (
+            <Button size="small" color="inherit" onClick={closeSession}
+                    sx={{ ml: 1, textTransform: "none" }}>
+              Close session
+            </Button>
+          )}
         </Typography>
+        <Box sx={{ mt: 2 }}>
+          <BrowserPicker value={browserId} onChange={setBrowserId} disabled={sessionOpen} />
+          {sessionOpen && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
+              Close the session to switch engine — a session belongs to one browser.
+            </Typography>
+          )}
+        </Box>
         <Button sx={{ mt: 1.5 }} variant={toolbarOn ? "contained" : "outlined"} color="secondary"
                 startIcon={<ConstructionIcon />} disabled={!sessionOpen} onClick={inspectToolbar}>
           {toolbarOn ? "Hide inspect toolbar" : "Show inspect toolbar"}
@@ -506,10 +546,25 @@ export default function ScanCenter() {
           )}
         </Grid>
         <Stack direction="row" spacing={2} alignItems="center" sx={{ mt: 2 }}>
-          <TextField size="small" type="number" label="Max pages" value={maxPages}
-                     disabled={useUrlList}
-                     onChange={(e) => setMaxPages(Math.max(1, Math.min(40, +e.target.value || 10)))}
-                     sx={{ width: 120 }} />
+          {/* Max pages bounds the CRAWL, and only the crawl. When you supply a URL
+              list the list length is the bound, and a recorded path is bounded by
+              its checkpoints — the sidecar ignores this value in both cases, so
+              showing it there just invites the question "did it cut my list off?".
+              (It never did: the URL-list branch caps at the list length, not this.) */}
+          {!useUrlList && !recordingObj && (
+            <TextField size="small" type="number" label="Max pages" value={maxPages}
+                       onChange={(e) => setMaxPages(Math.max(1, Math.min(40, +e.target.value || 10)))}
+                       helperText="Crawl stops here"
+                       sx={{ width: 130 }} />
+          )}
+          {useUrlList && urlList.length > 0 && (
+            <Chip size="small" variant="outlined"
+                  label={`${urlList.length} URL${urlList.length === 1 ? "" : "s"} — all will be scanned`} />
+          )}
+          {!useUrlList && recordingObj && (
+            <Chip size="small" variant="outlined"
+                  label={`${recordingObj.checkpoints?.length ?? 0} checkpoints from the recording`} />
+          )}
           <Typography variant="body2" color="text.secondary">
             {interact
               ? (allowMutations

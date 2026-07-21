@@ -1,0 +1,10 @@
+{
+  "source": "/tmp/routes/page-configs",
+  "pages": 37,
+  "urls": 37,
+  "states": 108,
+  "actions": 127,
+  "requiresLogin": 26,
+  "cssOnlySelectors": 38,
+  "recordings": 37
+}

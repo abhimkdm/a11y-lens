@@ -21,7 +21,7 @@
 // and the ARIA accessibility tree (ground truth for programmatic state). When
 // the screenshot and the tree disagree, that disagreement is often the finding.
 
-import { aiStructured } from "./ai.mjs";
+import { aiStructured, withRateLimitRetry } from "./ai.mjs";
 import { estimateCost } from "./cost.mjs";
 
 const BASE_PROMPT = `You are a senior accessibility specialist conducting a manual audit of one page. You are the human expert reviewer who comes AFTER the automated scanners. Treat the work that way: axe/IBM/pa11y already caught the syntax violations — missing attributes, invalid combinations, contrast on static text. Everything else is yours, and the everything else is most of what actually determines whether a person with a disability can use this page.
@@ -245,13 +245,16 @@ export async function auditPageAi(page, ai, {
   let data, usage = { inputTokens: 0, outputTokens: 0 };
   const warnings = [];
   try {
-    data = await aiStructured(ai, {
-      system: buildAuditPrompt({ chromeOnly }),
-      user: userText,
-      images: screenshot ? [screenshot] : [],
-      schema: AUDIT_SCHEMA,
-      maxTokens,
-    });
+    data = await withRateLimitRetry(
+      () => aiStructured(ai, {
+        system: buildAuditPrompt({ chromeOnly }),
+        user: userText,
+        images: screenshot ? [screenshot] : [],
+        schema: AUDIT_SCHEMA,
+        maxTokens,
+      }),
+      { onLog: (m) => warnings.push(m) }
+    );
     usage = data.__usage ?? usage;
   } catch (e) {
     warnings.push(`AI audit failed for ${url}: ${String(e.message ?? e)}`);

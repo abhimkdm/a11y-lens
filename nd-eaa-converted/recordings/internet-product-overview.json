@@ -1,0 +1,58 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.422Z",
+  "name": "Internet product - overview",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/2f2cd71e-0437-4ba9-b02f-8bdba0ed08ce",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": true,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/2f2cd71e-0437-4ba9-b02f-8bdba0ed08ce",
+      "title": "Internet product - overview",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/2f2cd71e-0437-4ba9-b02f-8bdba0ed08ce",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/ecare/products/{productUuid}",
+        "regexPattern": "^/ecare/products/[^/]+/?$",
+        "params": {
+          "productUuid": "2f2cd71e-0437-4ba9-b02f-8bdba0ed08ce"
+        },
+        "query": {},
+        "hasParams": true,
+        "heading": "Internet product - overview"
+      }
+    },
+    {
+      "i": 1,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": ".MuiAccordionSummary-root:not(.Mui-expanded)"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    1
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/2f2cd71e-0437-4ba9-b02f-8bdba0ed08ce",
+      "title": "Internet product - overview"
+    }
+  ]
+}

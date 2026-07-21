@@ -15,7 +15,7 @@ process.env.NODE_NO_WARNINGS = "1";
 
 import express from "express";
 import cors from "cors";
-import { chromium } from "playwright";
+import { chromium, firefox, webkit } from "playwright";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import { OVERLAY_SOURCE } from "./overlay.mjs";
@@ -26,7 +26,9 @@ import { deduplicate, generateExecutiveSummary } from "./report-site.mjs";
 import { buildSiteReport } from "./report-site-html.mjs";
 import { AI_PROVIDER_DEFAULTS, aiChat } from "./ai.mjs";
 import { createRecorder } from "./recorder.mjs";
-import { createReplayer, replayAll, validateRecording } from "./replay.mjs";
+import { createReplayer, replayAll, validateRecording, getHealEvents } from "./replay.mjs";
+import { createHealMemory } from "./heal-memory.mjs";
+import { generateSpec } from "./playwright-gen.mjs";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -35,7 +37,8 @@ import { runCrossCheckAudit } from "./cross-check.mjs";
 import { captureElementScreenshots, installHighlighter } from "./element-shots.mjs";
 import { captureKeyboardEvidence } from "./keyboard-evidence.mjs";
 import { createCrawlExplorer } from "./crawl-explorer.mjs";
-import { browserStatus, createBrowserInstaller } from "./browser-setup.mjs";
+import { browserStatus, browsersStatus, createBrowserInstaller } from "./browser-setup.mjs";
+import { BROWSERS, DEFAULT_BROWSER, getBrowser, launchPlan, contextOptions, requiredDownloads } from "./browsers.mjs";
 import {
   toolchainStatus, listAllDevices, bootAndroidEmulator, bootIosSimulator,
   listAndroidApps, launchAndroidApp, listIosApps, launchIosApp
@@ -44,7 +47,7 @@ import { scanMobile } from "./mobile/scanner.mjs";
 import { startFlow, flowStep, stopFlow, cancelFlow, flowStatus } from "./mobile/flow.mjs";
 import { renderMobileReportHtml } from "./mobile/report-html.mjs";
 import { renderMobileAiUsageReportHtml } from "./mobile/report-ai-usage-html.mjs";
-import { sessions, settings, audit, logs, crawls } from "./db.mjs";
+import { sessions, settings, audit, logs, crawls, rawDb } from "./db.mjs";
 import { encrypt, decrypt, maskScan, assertProviderAllowed } from "./security.mjs";
 import { compareScans } from "./compare.mjs";
 
@@ -64,23 +67,60 @@ const browserInstaller = createBrowserInstaller();
 
 app.post("/session/open", async (req, res) => {
   // Fail with the actual cause, not a Playwright stack trace the user can't act on.
-  if (!browserStatus().installed) {
+  const wantId = String(req.body?.browser || activeBrowserId || DEFAULT_BROWSER);
+  const wanted = getBrowser(wantId);
+  if (!browserStatus(wanted.engine).installed) {
     return res.status(412).json({
       ok: false,
-      error: "The browser engine isn't installed yet.",
-      needsBrowser: true,
+      error: `${wanted.label} needs the ${wanted.engine} engine, which isn't installed yet.`,
+      needsBrowser: true, browser: wanted.id, engine: wanted.engine,
     });
   }
   try {
     if (recorder.state.active) recorder.stop(); // avoid a dangling listener on the old page object
-    if (!browser) {
-      browser = await chromium.launch({ headless: false, channel: "chrome" })
-        .catch(() => chromium.launch({ headless: false }));
+
+    // Switching browser means a new engine — the old one cannot be reused.
+    if (browser && activeBrowserId !== wanted.id) {
+      await browser.close().catch(() => {});
+      browser = null; page = null;
     }
-    const ctx = await browser.newContext({ viewport: null });
+
+    let launchedVia = null;
+    if (!browser) {
+      const pw = { chromium, firefox, webkit };
+      const { plan } = launchPlan(wanted.id);
+      let lastErr = null;
+      for (const attempt of plan) {
+        try {
+          browser = await pw[attempt.engine].launch(attempt.options);
+          launchedVia = attempt.describe;
+          break;
+        } catch (e) { lastErr = e; }
+      }
+      if (!browser) throw lastErr ?? new Error(`Could not launch ${wanted.label}.`);
+      // A channel that isn't installed silently degrades to the bundled engine —
+      // say so, because "I tested Edge" is a claim the report has to earn.
+      if (wanted.channel && !/installed channel/.test(launchedVia)) {
+        logs.add({ level: "warning", source: "browser",
+          message: `${wanted.label} is not installed on this machine — used the bundled ${wanted.engine} engine instead.` });
+      }
+    }
+    activeBrowserId = wanted.id;
+
+    // The user can close the window at any time — treat that as the end of the
+    // session rather than letting the app keep claiming one is open.
+    browser.once("disconnected", () => forgetSession("browser closed"));
+
+    const ctx = await browser.newContext(contextOptions(wanted.id));
     page = await ctx.newPage();
+    page.once("close", () => forgetSession("page closed"));
+    ctx.once("close", () => forgetSession("context closed"));
     if (req.body?.url) await page.goto(req.body.url, { waitUntil: "domcontentloaded" });
-    res.json({ ok: true, message: "Browser open. Log in manually, then run a scan." });
+    audit.log("session.open", `${wanted.label} · ${launchedVia ?? "existing session"}`);
+    res.json({
+      ok: true, browser: wanted.id, browserLabel: wanted.label, launchedVia,
+      message: `${wanted.label} open. Log in manually, then run a scan.`,
+    });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e) });
   }
@@ -93,9 +133,29 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, app: "a11y-lens-sidecar", version: "2.0.0", pid: process.pid });
 });
 
+// The session is only open if the page is STILL open. A closed page object is
+// still truthy, which is why the UI used to show "Session open" forever after the
+// user closed the window by hand.
 app.get("/session/status", async (_req, res) => {
-  if (!page) return res.json({ open: false });
-  res.json({ open: true, url: page.url(), title: await page.title().catch(() => "") });
+  if (!sessionIsLive()) {
+    forgetSession("closed");
+    return res.json({ open: false, browser: activeBrowserId });
+  }
+  res.json({
+    open: true, browser: activeBrowserId,
+    browserLabel: getBrowser(activeBrowserId).label,
+    url: page.url(), title: await page.title().catch(() => ""),
+  });
+});
+
+// Explicit stop, so the engine can be changed without hunting for the window.
+app.post("/session/close", async (_req, res) => {
+  const was = sessionIsLive();
+  try { if (recorder.state.active) recorder.stop(); } catch { /* ignore */ }
+  try { await browser?.close(); } catch { /* already gone */ }
+  forgetSession("closed by user");
+  if (was) audit.log("session.close", "user requested");
+  res.json({ ok: true, wasOpen: was });
 });
 
 // ---- Path recorder (v2 — action capture) ---------------------------------
@@ -107,7 +167,27 @@ app.get("/session/status", async (_req, res) => {
 
 // A recording loaded from disk, held in memory for replay. Never persisted with
 // secrets — validateRecording strips any value from masked steps on the way in.
+let activeBrowserId = DEFAULT_BROWSER;   // which registry entry the open session uses
+
+function sessionIsLive() {
+  try { return !!page && !page.isClosed() && !!browser && browser.isConnected(); }
+  catch { return false; }
+}
+
+// Drop every handle to a dead session. Called both when we close it ourselves and
+// when the user closes the window — otherwise the next scan would run against a
+// detached page and fail with something unreadable.
+function forgetSession(reason) {
+  if (!browser && !page) return;
+  try { if (recorder.state.active) recorder.stop(); } catch { /* ignore */ }
+  browser = null;
+  page = null;
+  if (reason) logs.add({ level: "info", source: "session", message: `Browser session ended (${reason}).` });
+}
 let importedRecording = null;
+
+// Learned selector repairs, shared by every replay. See heal-memory.mjs.
+const healMemory = createHealMemory(rawDb);
 
 // Reproduce-only replay progress (scan replays reuse crawler.state instead).
 let replayState = { running: false, mode: null, log: [], summary: null, error: null };
@@ -194,15 +274,22 @@ app.post("/record/replay/start", async (req, res) => {
   // recorded actions (possibly form submits) against the wrong host.
   let pageOrigin = null;
   try { pageOrigin = new URL(page.url()).origin; } catch { /* blank page */ }
+  // A different origin used to be refused. It is now a first-class scenario:
+  // record on dev, replay on qa or prod. The recorded routes are rebased onto the
+  // OPEN session's origin, so we only refuse when there is nothing to rebase onto.
   if (recording.origin && pageOrigin && recording.origin !== pageOrigin && pageOrigin !== "null") {
-    return res.status(409).json({
-      ok: false,
-      error: `Recording was made on ${recording.origin} but the open session is on ${pageOrigin}. Open a session on the recording's origin first.`,
-    });
+    audit.log("record.replay", `cross-environment: ${recording.origin} -> ${pageOrigin}`);
   }
 
   const scan = req.body?.scan !== false;
-  const replayer = createReplayer(recording, { onLog: (m) => (scan ? null : rlog(m)) });
+  let healAi = null; try { healAi = resolveAi(req.body?.ai); } catch { /* healing simply stays local */ }
+  const replayer = createReplayer(recording, {
+    onLog: (m) => (scan ? null : rlog(m)), ai: healAi,
+    memory: healMemory, origin: recording.origin || pageOrigin || "",
+    // Replay a dev recording against qa/prod, and seed known ids.
+    targetOrigin: req.body?.targetOrigin || (recording.origin && pageOrigin && recording.origin !== pageOrigin ? pageOrigin : ""),
+    vars: req.body?.variables || {},
+  });
 
   if (!scan) {
     // Reproduce-only: run every step, report where it breaks / where it's fragile.
@@ -210,7 +297,10 @@ app.post("/record/replay/start", async (req, res) => {
     audit.log("record.replay", `reproduce · ${recording.steps.length} actions`);
     res.json({ ok: true, mode: "reproduce", steps: recording.steps.length });
     try {
-      const summary = await replayAll(page, recording, { onLog: rlog });
+      const summary = await replayAll(page, recording, {
+        onLog: rlog, ai: healAi, memory: healMemory, origin: recording.origin || pageOrigin || "",
+        targetOrigin: req.body?.targetOrigin || "", vars: req.body?.variables || {},
+      });
       replayState.summary = summary;
     } catch (e) {
       replayState.error = String(e.message ?? e);
@@ -244,6 +334,28 @@ app.post("/record/replay/start", async (req, res) => {
     checkpointCount: replayer.checkpointCount,
   });
   res.json({ ok: true, mode: "scan", checkpoints: replayer.checkpointCount, aiAudit });
+});
+
+// Learned repairs — what the tool has taught itself about this app.
+app.get("/heal/history", (_req, res) => {
+  res.json({ ok: true, enabled: healMemory.enabled, entries: healMemory.list() });
+});
+app.delete("/heal/history", (_req, res) => {
+  const removed = healMemory.clear();
+  audit.log("heal.clear", `${removed} learned repair(s) removed`);
+  res.json({ ok: true, removed });
+});
+
+// Export a recorded journey as a runnable Playwright spec.
+app.post("/record/spec", (req, res) => {
+  try {
+    const rec = validateRecording(req.body?.recording ?? importedRecording ?? recorder.toJSON());
+    const out = generateSpec(rec, { name: req.body?.name, axe: req.body?.axe !== false });
+    audit.log("record.spec", `${out.stats.steps} steps, ${out.stats.unstable} unstable selector(s)`);
+    res.json({ ok: true, ...out });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e.message ?? e) });
+  }
 });
 
 app.get("/record/replay/status", (_req, res) => {
@@ -819,6 +931,12 @@ app.post("/crawls/import", (req, res) => {
 // Chromium can't be bundled into an installer, and telling a QA tester to run
 // `npx playwright install` is useless — they have an MSI, not a terminal. We
 // ship Playwright's CLI and a Node runtime, so the app installs its own browser.
+// The full registry with per-engine availability, so the UI can offer only what
+// can actually run and explain what each engine does and does not prove.
+app.get("/browsers", (_req, res) => {
+  res.json({ ok: true, active: activeBrowserId, browsers: browsersStatus(BROWSERS) });
+});
+
 app.get("/browser/status", (_req, res) => {
   const st = browserStatus();
   res.json({
@@ -830,16 +948,22 @@ app.get("/browser/status", (_req, res) => {
   });
 });
 
-app.post("/browser/install", (_req, res) => {
+app.post("/browser/install", (req, res) => {
   if (browserInstaller.state.running) {
     return res.status(409).json({ ok: false, error: "The browser engine is already downloading." });
   }
-  if (browserStatus().installed) {
-    return res.json({ ok: true, alreadyInstalled: true });
+  const preIds = Array.isArray(req.body?.browsers) ? req.body.browsers : (req.body?.browser ? [req.body.browser] : []);
+  const preEngines = preIds.length ? requiredDownloads(preIds) : ["chromium"];
+  if (preEngines.every((e) => browserStatus(e).installed)) {
+    return res.json({ ok: true, alreadyInstalled: true, engines: preEngines });
   }
-  audit.log("browser.install", "started");
-  browserInstaller.install();
-  res.json({ ok: true, started: true });
+  // Install exactly the engines the requested browsers need — downloading all
+  // three when the user only wants Firefox is a few hundred MB of nothing.
+  const ids = Array.isArray(req.body?.browsers) ? req.body.browsers : (req.body?.browser ? [req.body.browser] : []);
+  const engines = ids.length ? requiredDownloads(ids) : ["chromium"];
+  audit.log("browser.install", engines.join(", "));
+  browserInstaller.install(engines);
+  res.json({ ok: true, started: true, engines });
 });
 
 app.get("/browser/install/status", (_req, res) => {
@@ -1193,17 +1317,48 @@ function securityConfig() {
 
 // Resolve the AI config for a request: stored encrypted key wins over a
 // request-supplied one; local-only mode is enforced for every AI call.
+// Resolve the AI config for a request.
+//
+// Two rules here were previously wrong and produced "Missing Authentication header"
+// when switching provider:
+//
+//   1. A stored key belongs to the provider it was saved FOR. Reusing nvidia's key
+//      for an openrouter request sends the wrong credential — or, if the stored
+//      value is empty, an empty `Bearer` header, which is exactly what that error
+//      means. The stored key is now only used when the provider matches.
+//   2. A key typed into the form must WIN over the stored one, otherwise
+//      "Test Connection" can never test the key you just pasted — it would silently
+//      test the old one and report a confusing failure.
+function pickApiKey(reqAi, stored, provider) {
+  const typed = typeof reqAi?.apiKey === "string" ? reqAi.apiKey.trim() : "";
+  if (typed) return typed;                                   // explicit beats stored
+  if (stored?.apiKeyEnc && stored.provider === provider) {
+    const k = decrypt(stored.apiKeyEnc);
+    if (k) return k;
+  }
+  return "";
+}
+
 function resolveAi(reqAi) {
   const stored = settings.get("ai");
   const provider = reqAi?.provider || stored?.provider;
   const defaults = AI_PROVIDER_DEFAULTS[provider] ?? {};
+  const sameProvider = stored?.provider === provider;
   const ai = {
     provider,
-    model: reqAi?.model || stored?.model || defaults.model,
-    baseUrl: reqAi?.baseUrl || stored?.baseUrl || defaults.baseUrl,
-    apiKey: stored?.apiKeyEnc ? decrypt(stored.apiKeyEnc) : reqAi?.apiKey,
+    model: reqAi?.model || (sameProvider && stored?.model) || defaults.model,
+    baseUrl: reqAi?.baseUrl || (sameProvider && stored?.baseUrl) || defaults.baseUrl,
+    apiKey: pickApiKey(reqAi, stored, provider),
   };
   assertProviderAllowed(ai.provider, securityConfig().localOnly);
+  // Fail with the actual cause. An empty key produces "Missing Authentication
+  // header" from the provider, which tells the user nothing about what to do.
+  if (!ai.apiKey && provider && provider !== "ollama") {
+    throw new Error(
+      `No API key for "${provider}". Paste the key and click Save provider settings` +
+      `${stored?.provider && stored.provider !== provider ? ` — the stored key belongs to "${stored.provider}"` : ""}.`
+    );
+  }
   return ai;
 }
 
@@ -1218,8 +1373,8 @@ function resolveAiB(reqAi) {
   const ai = {
     provider,
     model: reqAi?.model || stored?.model || defaults.model,
-    baseUrl: reqAi?.baseUrl || stored?.baseUrl || defaults.baseUrl,
-    apiKey: stored?.apiKeyEnc ? decrypt(stored.apiKeyEnc) : reqAi?.apiKey,
+    baseUrl: reqAi?.baseUrl || (stored?.provider === provider && stored?.baseUrl) || defaults.baseUrl,
+    apiKey: pickApiKey(reqAi, stored, provider),
   };
   assertProviderAllowed(ai.provider, securityConfig().localOnly);
   return ai;

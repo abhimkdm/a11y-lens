@@ -16,6 +16,28 @@
 // Nothing here persists secrets. Masked steps carry no value and are skipped on
 // replay because the QA's manual login already authenticated the shared context.
 
+import { healTarget } from "./heal.mjs";
+import {
+  templatize, resolveNavigationTarget, matchesTemplate, scoreUrlMatch, createVariableStore,
+} from "./url-template.mjs";
+
+// Healing context for the current replay run. Set by createReplayer/replayAll so
+// individual steps don't each need the AI config threaded through them.
+let healAi = null;
+let healEvents = [];
+let healMemory = null;
+let healOrigin = "";
+let journeyVars = createVariableStore();
+let targetOrigin = "";        // set to replay a dev recording against qa/prod
+export function setJourneyContext({ origin = "", vars = {} } = {}) {
+  targetOrigin = origin || ""; journeyVars = createVariableStore(vars);
+}
+export function getJourneyVariables() { return journeyVars.all; }
+export function setHealContext(ai, memory = null, origin = "") {
+  healAi = ai || null; healMemory = memory; healOrigin = origin || ""; healEvents = [];
+}
+export function getHealEvents() { return healEvents.slice(); }
+
 function escAttr(v) { return String(v).replace(/(["\\])/g, "\\$1"); }
 
 // Build a Playwright locator for a single ranked selector entry.
@@ -125,6 +147,13 @@ export async function resolve(page, target, { waitTimeout = 4000 } = {}) {
   return hiddenOnly;
 }
 
+async function headingOf(page) {
+  return page.evaluate(() => {
+    const h = document.querySelector('h1,[role=heading][aria-level="1"]');
+    return h ? (h.textContent || "").replace(/\s+/g, " ").trim().slice(0, 80) : document.title;
+  }).catch(() => "");
+}
+
 // Let a SPA settle after an action/navigation without hanging on a chatty page.
 export async function settle(page, { timeout = 8000 } = {}) {
   await page.waitForLoadState("domcontentloaded", { timeout }).catch(() => {});
@@ -138,12 +167,38 @@ export async function replayStep(page, step, { onLog = () => {}, onMasked = null
 
   if (t === "navigate") {
     if (step.manual && /^https?:/.test(step.url || "")) {
-      onLog(`navigate → ${step.url}`);
-      await page.goto(step.url, { waitUntil: "domcontentloaded", timeout: stepTimeout });
+      // Prefer the ROUTE over the recorded URL. /customer/12345 was that session's
+      // data; what we actually want is /customer/{customerId} filled from whatever
+      // ids this run has produced — and, if an origin override is set, the same
+      // route on qa or prod instead of dev.
+      const meta = step.urlMeta || templatize(step.url);
+      const target = resolveNavigationTarget(meta, { vars: journeyVars.all, origin: targetOrigin });
+      const url = target.url || step.url;
+      onLog(`navigate → ${url}${target.strategy !== "exact" ? ` (${target.strategy})` : ""}`);
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: stepTimeout });
       await settle(page);
+
+      // Did we land on the recorded ROUTE? Exact-URL comparison would fail on
+      // every dynamic id, so validation is by template.
+      if (meta && meta.pathTemplate && !matchesTemplate(page.url(), meta)) {
+        const landed = { ...templatize(page.url()), heading: await headingOf(page) };
+        const confidence = scoreUrlMatch(meta, landed);
+        if (confidence >= 70) {
+          onLog(`Route changed: ${meta.pathTemplate} → ${landed.pathTemplate} (confidence ${confidence}%) — accepted and remembered.`);
+          healEvents.push({ step: step.i, type: "route", was: meta.pathTemplate, now: landed.pathTemplate, confidence, healedBy: "url-template" });
+          step.urlMeta = { ...landed, routeName: meta.routeName };   // strengthen for next time
+        } else {
+          onLog(`Landed on ${landed.pathTemplate}, expected ${meta.pathTemplate} (only ${confidence}% similar).`);
+        }
+      }
     } else {
       onLog("navigate (caused by prior action) → settling");
       await settle(page);
+    }
+    // Learn any ids the app just produced, so later steps can reuse them.
+    const learned = journeyVars.learnFrom(page.url());
+    if (Object.keys(learned).length) {
+      onLog(`Captured ${Object.entries(learned).map(([k, v]) => `${k}=${v}`).join(", ")} for later steps.`);
     }
     return { ok: true, tier: "navigate" };
   }
@@ -161,7 +216,45 @@ export async function replayStep(page, step, { onLog = () => {}, onMasked = null
     return { ok: true, tier: "keyboard" };
   }
 
-  const found = await resolve(page, step.target);
+  let found = await resolve(page, step.target);
+
+  // Self-healing. Every recorded selector is dead, so the control was re-wrapped,
+  // re-classed or moved. Score the page's live controls against the recorded DOM
+  // fingerprint; only if that is inconclusive does a model get involved.
+  if (!found && step.target) {
+    const healed = await healTarget(page, step.target, {
+      ai: healAi, onLog, memory: healMemory, origin: healOrigin,
+    });
+    if (healed) {
+      try {
+        const loc = locatorFor(page, healed.selector).first();
+        if (await loc.count() > 0) {
+          // Selector strengthening. The healed selector is promoted to the FRONT
+          // of this step's chain and the dead ones are dropped, so the recording
+          // repairs itself: the next replay resolves on the first try instead of
+          // walking a chain of selectors that are known not to work any more.
+          if (Array.isArray(step.target.selectors)) {
+            const fresh = JSON.stringify(healed.selector);
+            step.target.selectors = [
+              healed.selector,
+              ...step.target.selectors.filter((x) => JSON.stringify(x) !== fresh).slice(0, 4),
+            ];
+            step.target.healedAt = new Date().toISOString();
+            step.target.name = healed.candidate.name || step.target.name;
+          }
+          healEvents.push({
+            step: step.i, type: t,
+            was: step.target.name || step.target.text || step.target.tag,
+            now: healed.candidate.name || healed.candidate.text,
+            confidence: healed.confidence, healedBy: healed.healedBy,
+            strengthened: Array.isArray(step.target.selectors),
+          });
+          found = { loc, tier: `healed:${healed.healedBy}`, sel: healed.selector, ambiguous: false, healed };
+        }
+      } catch { /* fall through to the error below */ }
+    }
+  }
+
   if (!found) {
     const tg = step.target || {};
     const desc = tg.name || tg.text || tg.testid || tg.tag || t;
@@ -245,7 +338,9 @@ export function validateRecording(obj) {
 // to (and including) the i-th checkpoint step, then returns the resulting state
 // for the crawler to scan. Smells encountered on the way are attached so the
 // crawler can promote them to WCAG 4.1.2 findings at that checkpoint.
-export function createReplayer(recording, { onLog = () => {}, onMasked = null } = {}) {
+export function createReplayer(recording, { onLog = () => {}, onMasked = null, ai = null, memory = null, origin = "", targetOrigin: to = "", vars = {} } = {}) {
+  setHealContext(ai, memory, origin);
+  setJourneyContext({ origin: to, vars });
   const steps = Array.isArray(recording.steps) ? recording.steps : [];
   let checkpoints = (Array.isArray(recording.checkpoints) && recording.checkpoints.length)
     ? recording.checkpoints.slice()
@@ -258,7 +353,8 @@ export function createReplayer(recording, { onLog = () => {}, onMasked = null } 
   checkpoints = Array.from(new Set(checkpoints)).sort((a, b) => a - b);
 
   let cursor = 0; // index into steps[]
-  const state = { checkpointCount: checkpoints.length, done: false, allSmells: [], redrives: 0 };
+  const state = { checkpointCount: checkpoints.length, done: false, allSmells: [], redrives: 0,
+                  get healed() { return getHealEvents(); } };
 
   async function runRange(page, from, to, collect) {
     for (let k = from; k < steps.length && steps[k].i <= to; k++) {
@@ -314,9 +410,11 @@ export function createReplayer(recording, { onLog = () => {}, onMasked = null } 
 
 // Reproduce-only mode: drive every step start to finish, no scanning. Returns a
 // summary QA can use to see whether the path still works and where it's fragile.
-export async function replayAll(page, recording, { onLog = () => {}, onMasked = null } = {}) {
+export async function replayAll(page, recording, { onLog = () => {}, onMasked = null, ai = null, memory = null, origin = "", targetOrigin: to = "", vars = {} } = {}) {
+  setHealContext(ai, memory, origin);
+  setJourneyContext({ origin: to, vars });
   const steps = Array.isArray(recording.steps) ? recording.steps : [];
-  const summary = { executed: 0, skipped: 0, smells: [], failedAt: null, tiers: {} };
+  const summary = { executed: 0, skipped: 0, smells: [], failedAt: null, tiers: {}, healed: [] };
   for (const step of steps) {
     try {
       const res = await replayStep(page, step, { onLog, onMasked });
@@ -329,6 +427,7 @@ export async function replayAll(page, recording, { onLog = () => {}, onMasked = 
       break;
     }
   }
+  summary.healed = getHealEvents();
   return summary;
 }
 

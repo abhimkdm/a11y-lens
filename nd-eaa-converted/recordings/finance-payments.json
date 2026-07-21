@@ -1,0 +1,85 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.421Z",
+  "name": "Finance - payments",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/finance/5070001077",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": true,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/finance/5070001077",
+      "title": "Finance - payments",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/finance/5070001077",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/ecare/finance/{financeId}",
+        "regexPattern": "^/ecare/finance/[^/]+/?$",
+        "params": {
+          "financeId": "5070001077"
+        },
+        "query": {},
+        "hasParams": true,
+        "heading": "Finance - payments"
+      }
+    },
+    {
+      "i": 1,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": "div[tabindex=\"0\"]:has(p.MuiTypography-body1:has-text(\"Kontoaktiviteter\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 2,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "*",
+            "value": "Filtre\"), button:has-text(\"Filtre"
+          },
+          {
+            "by": "text",
+            "value": "Filtre\"), button:has-text(\"Filtre"
+          },
+          {
+            "by": "css",
+            "value": "[tabindex=\"0\"]"
+          }
+        ],
+        "name": "Filtre\"), button:has-text(\"Filtre",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    1,
+    2
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/finance/5070001077",
+      "title": "Finance - payments"
+    }
+  ]
+}

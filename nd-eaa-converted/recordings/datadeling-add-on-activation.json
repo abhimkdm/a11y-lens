@@ -1,0 +1,185 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.423Z",
+  "name": "Datadeling add-on activation",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/add-ons",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": true,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/add-ons",
+      "title": "Datadeling add-on activation",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/add-ons",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/ecare/products/{productUuid}/add-ons",
+        "regexPattern": "^/ecare/products/[^/]+/add-ons/?$",
+        "params": {
+          "productUuid": "16bbbcda-e921-4868-bc29-c5d14397627f"
+        },
+        "query": {},
+        "hasParams": true,
+        "heading": "Datadeling add-on activation"
+      }
+    },
+    {
+      "i": 1,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "*",
+            "value": "Datadeling\")) button:has-text(\"Aktivér"
+          },
+          {
+            "by": "text",
+            "value": "Datadeling\")) button:has-text(\"Aktivér"
+          },
+          {
+            "by": "css",
+            "value": ".MuiAccordionSummary-root:has(h4"
+          }
+        ],
+        "name": "Datadeling\")) button:has-text(\"Aktivér",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 2,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Næste"
+          },
+          {
+            "by": "text",
+            "value": "Næste"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Næste",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 3,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "text",
+            "value": "Fysisk simkort"
+          }
+        ],
+        "name": "Fysisk simkort",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 4,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Næste"
+          },
+          {
+            "by": "text",
+            "value": "Næste"
+          },
+          {
+            "by": "css",
+            "value": "button"
+          }
+        ],
+        "name": "Næste",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 5,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "css",
+            "value": "button.MuiIconButton-root:has([data-testid=\"CloseIcon\"])"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 6,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "*",
+            "value": "Rejsedata Grønland\")) button:has-text(\"Aktivér"
+          },
+          {
+            "by": "text",
+            "value": "Rejsedata Grønland\")) button:has-text(\"Aktivér"
+          },
+          {
+            "by": "css",
+            "value": ".MuiAccordionSummary-root:has(h4"
+          }
+        ],
+        "name": "Rejsedata Grønland\")) button:has-text(\"Aktivér",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    1,
+    2,
+    4,
+    6
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/products/16bbbcda-e921-4868-bc29-c5d14397627f/add-ons",
+      "title": "Datadeling add-on activation"
+    }
+  ]
+}

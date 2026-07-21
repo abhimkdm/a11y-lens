@@ -1,0 +1,222 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.427Z",
+  "name": "Fibernet product - 1000/1000",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/internet/fibernet",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": false,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/internet/fibernet",
+      "title": "Fibernet product - 1000/1000",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/internet/fibernet",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/shop/internet/fibernet",
+        "regexPattern": "^/shop/internet/fibernet/?$",
+        "params": {},
+        "query": {},
+        "hasParams": false,
+        "heading": "Fibernet product - 1000/1000"
+      }
+    },
+    {
+      "i": 1,
+      "type": "fill",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "location-search"
+          },
+          {
+            "by": "css",
+            "value": "[data-testid=\"location-search\"]"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "value": "Cylindervej 14"
+    },
+    {
+      "i": 2,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": "[role=\"listbox\"] [role=\"option\"]:first-child"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 3,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "css",
+            "value": "a[href*=\"1000-1000\"]"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 4,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Forlæng dit internet"
+          },
+          {
+            "by": "text",
+            "value": "Forlæng dit internet"
+          },
+          {
+            "by": "css",
+            "value": "button.taConfiguratorButton"
+          }
+        ],
+        "name": "Forlæng dit internet",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 5,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "css",
+            "value": ".MuiDrawer-root button:has([data-testid=\"CloseIcon\"])"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 6,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Sikkerhed udenfor hjemmet"
+          },
+          {
+            "by": "text",
+            "value": "Sikkerhed udenfor hjemmet"
+          },
+          {
+            "by": "css",
+            "value": "button.taConfiguratorButton"
+          }
+        ],
+        "name": "Sikkerhed udenfor hjemmet",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    },
+    {
+      "i": 7,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "testid",
+            "attr": "data-testid",
+            "value": "CloseIcon"
+          },
+          {
+            "by": "role",
+            "role": "button",
+            "name": "luk"
+          },
+          {
+            "by": "css",
+            "value": ".MuiDrawer-root :is(button[aria-label=\"luk\"], button:has([data-testid=\"CloseIcon\"]), button:has-text(\"Annuller\"), button:has-text(\"Luk\"))"
+          }
+        ],
+        "name": "",
+        "tag": "",
+        "role": "",
+        "text": ""
+      }
+    },
+    {
+      "i": 8,
+      "type": "click",
+      "target": {
+        "selectors": [
+          {
+            "by": "tagText",
+            "tag": "button",
+            "value": "Fast ip-adresse"
+          },
+          {
+            "by": "text",
+            "value": "Fast ip-adresse"
+          },
+          {
+            "by": "css",
+            "value": "button.taConfiguratorButton"
+          }
+        ],
+        "name": "Fast ip-adresse",
+        "tag": "",
+        "role": "",
+        "text": ""
+      },
+      "checkpoint": true
+    }
+  ],
+  "checkpoints": [
+    0,
+    3,
+    4,
+    6,
+    8
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/shop/internet/fibernet",
+      "title": "Fibernet product - 1000/1000"
+    }
+  ]
+}

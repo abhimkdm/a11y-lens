@@ -1,0 +1,40 @@
+{
+  "version": 2,
+  "kind": "a11y-lens-recording",
+  "createdAt": "2026-07-21T14:55:27.425Z",
+  "name": "Order - detail",
+  "startUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/orders/9824dcff-bdfb-4453-bc54-7b4c9e6b47c9",
+  "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+  "requiresLogin": true,
+  "steps": [
+    {
+      "i": 0,
+      "type": "navigate",
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/orders/9824dcff-bdfb-4453-bc54-7b4c9e6b47c9",
+      "title": "Order - detail",
+      "manual": true,
+      "checkpoint": true,
+      "urlMeta": {
+        "actualUrl": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/orders/9824dcff-bdfb-4453-bc54-7b4c9e6b47c9",
+        "origin": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud",
+        "pathTemplate": "/ecare/orders/{orderUuid}",
+        "regexPattern": "^/ecare/orders/[^/]+/?$",
+        "params": {
+          "orderUuid": "9824dcff-bdfb-4453-bc54-7b4c9e6b47c9"
+        },
+        "query": {},
+        "hasParams": true,
+        "heading": "Order - detail"
+      }
+    }
+  ],
+  "checkpoints": [
+    0
+  ],
+  "entries": [
+    {
+      "url": "https://nd-cloud-portal-bubble01-bss.nd3114-dev.user.managed.netcracker.cloud/ecare/orders/9824dcff-bdfb-4453-bc54-7b4c9e6b47c9",
+      "title": "Order - detail"
+    }
+  ]
+}
