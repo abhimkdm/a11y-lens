@@ -99,7 +99,9 @@ export const api = {
     ai: { provider: string; model: string; apiKey: string; baseUrl?: string },
     urlList?: string[],
     interaction?: { interact: boolean; allowMutations: boolean; valueProfile?: unknown },
-    aiAudit?: boolean
+    aiAudit?: boolean,
+    coverage?: { templateCoverage?: boolean; representativesPerTemplate?: number },
+    scope?: string[]
   ) =>
     req(`${BASE}/scan/full/start`, {
       method: "POST",
@@ -110,6 +112,9 @@ export const api = {
         allowMutations: interaction?.allowMutations ?? false,
         valueProfile: interaction?.valueProfile ?? null,
         aiAudit: aiAudit ?? false,
+        templateCoverage: coverage?.templateCoverage,
+        representativesPerTemplate: coverage?.representativesPerTemplate,
+        scope: scope && scope.length ? scope : undefined,
       }),
     }),
 

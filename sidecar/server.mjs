@@ -599,8 +599,21 @@ app.post("/scan/full/start", (req, res) => {
     interact, allowMutations, valueProfile,
     maxInteractions: req.body?.maxInteractions,
     aiAudit,
+    // Template-aware coverage (on by default for discovery crawls). Off means scan
+    // every discovered page; a supplied URL list ignores this and scans as given.
+    templateCoverage: req.body?.templateCoverage,
+    representativesPerTemplate: req.body?.representativesPerTemplate,
+    // Path scope, e.g. ["/ecare", "/ecare/*"]. Keeps the crawl in the area under
+    // test. Accepts an array or a comma/newline string.
+    scope: req.body?.scope,
   });
-  res.json({ ok: true, interaction: interact ? (allowMutations ? "operate" : "explore") : "off", aiAudit });
+  res.json({
+    ok: true,
+    interaction: interact ? (allowMutations ? "operate" : "explore") : "off",
+    aiAudit,
+    // Echo the estimate so the UI can show "~N AI requests" the moment the run starts.
+    aiEstimate: crawler.state.aiEstimate ?? null,
+  });
 });
 
 app.get("/scan/full/status", (_req, res) => {

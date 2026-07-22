@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
     Paper, Typography, Stack, Button, TextField, Alert, LinearProgress, Grid2 as Grid, Chip, Box,
-    Checkbox, FormControlLabel, MenuItem, Tooltip,
+    Checkbox, FormControlLabel, MenuItem, Switch, Tooltip,
 } from "@mui/material";
 import BoltIcon from "@mui/icons-material/Bolt";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
@@ -96,7 +96,14 @@ export default function ScanCenter() {
     } else setError(r.error ?? "Report generation failed — see Logs for details.");
   };
   const [overlayMsg, setOverlayMsg] = useState("");
-  const [maxPages, setMaxPages] = useState(10);
+  const [maxPages, setMaxPages] = useState(50);
+  // Template-aware coverage: scan each distinct route template plus N examples,
+  // rather than every near-identical page. On by default for discovery crawls.
+  const [templateCoverage, setTemplateCoverage] = useState(true);
+  const [reps, setReps] = useState(3);
+  // Path scope, e.g. "/ecare" or "/ecare/*, !/ecare/logout". Empty = whole origin.
+  const [scopeText, setScopeText] = useState("");
+  const [aiEstimate, setAiEstimate] = useState<{ pages: number; estimatedRequests: number } | null>(null);
   const [crawl, setCrawl] = useState<{ pages: { url: string; title: string; score: number }[]; log: { msg: string }[]; currentUrl: string | null; unitsDone?: number; unitsTotal?: number; stage?: string } | null>(null);
   // Describes the currently running scan so the agent panel shows only the
   // agents this run actually enabled, and a real progress denominator when known.
@@ -291,13 +298,18 @@ export default function ScanCenter() {
       try { valueProfile = JSON.parse(valueProfileText); setValueProfileError(""); }
       catch { setValueProfileError("Value profile is not valid JSON."); setError("Fix the value profile JSON, or clear it."); return; }
     }
-    setError(""); setCrawl(null);
+    setError(""); setCrawl(null); setAiEstimate(null);
     const r = await api.fullScanStart(
       maxPages, aiProvider, useUrlList ? urlList : undefined,
       interact ? { interact: true, allowMutations, valueProfile } : undefined,
-      aiAudit
+      aiAudit,
+      { templateCoverage, representativesPerTemplate: reps },
+      scopeText.split(/[\n,]/).map((x) => x.trim()).filter(Boolean)
     ).catch((e) => ({ ok: false, error: String(e) }));
     if (!r.ok) { setError(r.error ?? "Could not start full scan"); return; }
+    // Show the AI request estimate the sidecar computed, so a big AI run cannot
+    // start silently — the number is in front of the user before it spends.
+    if (r.aiEstimate) setAiEstimate(r.aiEstimate);
     // Non-sticky: a mutating run can't be left armed for the next scan.
     setAllowMutations(false);
     setRunInfo({ aiAudit, interact, total: useUrlList ? urlList.length : null });
@@ -553,9 +565,22 @@ export default function ScanCenter() {
               (It never did: the URL-list branch caps at the list length, not this.) */}
           {!useUrlList && !recordingObj && (
             <TextField size="small" type="number" label="Max pages" value={maxPages}
-                       onChange={(e) => setMaxPages(Math.max(1, Math.min(40, +e.target.value || 10)))}
-                       helperText="Crawl stops here"
-                       sx={{ width: 130 }} />
+                       onChange={(e) => setMaxPages(Math.max(1, Math.min(1000, +e.target.value || 50)))}
+                       helperText="Crawl stops here (max 1000)"
+                       sx={{ width: 150 }} />
+          )}
+          {!useUrlList && !recordingObj && (
+            <Tooltip title="Scan each distinct route template plus a few examples, instead of every near-identical page. On a site with 150 product pages under one template, this scans a handful rather than all 150 — real coverage without the repetition (and, for AI scans, without the token bill).">
+              <FormControlLabel
+                control={<Switch size="small" checked={templateCoverage}
+                                 onChange={(e) => setTemplateCoverage(e.target.checked)} />}
+                label="Group similar pages" />
+            </Tooltip>
+          )}
+          {!useUrlList && !recordingObj && templateCoverage && (
+            <TextField size="small" type="number" label="Examples / template" value={reps}
+                       onChange={(e) => setReps(Math.max(1, Math.min(10, +e.target.value || 3)))}
+                       sx={{ width: 150 }} />
           )}
           {useUrlList && urlList.length > 0 && (
             <Chip size="small" variant="outlined"
@@ -573,6 +598,20 @@ export default function ScanCenter() {
               : "The AI explores navigation only — it never clicks delete, submit, payment, approve, or logout."}
           </Typography>
         </Stack>
+        {!recordingObj && (
+          <TextField
+            size="small" fullWidth sx={{ mt: 2 }}
+            label="Limit to paths (optional)"
+            placeholder="/ecare, /ecare/*   —   or exclude with  !/ecare/logout"
+            value={scopeText}
+            onChange={(e) => setScopeText(e.target.value)}
+            helperText={
+              scopeText.trim()
+                ? "The scan stays within these paths — links outside them are not followed."
+                : "Blank = the whole site. Enter /ecare to scan only ECare and skip login, marketing and other portals."
+            }
+          />
+        )}
 
         <FormControlLabel
           sx={{ mt: 1 }}
@@ -647,6 +686,15 @@ export default function ScanCenter() {
         )}
         {scanning !== "idle" && !(scanning === "full" && crawl) && <LinearProgress sx={{ mt: 2 }} />}
         {error && <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert>}
+        {aiEstimate && scanning === "full" && (
+          <Alert severity={aiEstimate.estimatedRequests > 200 ? "warning" : "info"} sx={{ mt: 2 }}>
+            This AI scan will make roughly <b>{aiEstimate.estimatedRequests}</b> model
+            request{aiEstimate.estimatedRequests === 1 ? "" : "s"} across ~{aiEstimate.pages} page
+            {aiEstimate.pages === 1 ? "" : "s"} and their interaction states.
+            {aiEstimate.estimatedRequests > 200 &&
+              " That exceeds most free tiers (e.g. OpenRouter's 50/day) — consider a deterministic Full Scan, or a narrower start point."}
+          </Alert>
+        )}
         {scanning === "full" && crawl && (
           <>
             <AgentActivityPanel

@@ -17,6 +17,8 @@ import { aiChat } from "./ai.mjs";
 import { captureElementScreenshots, captureFullPageAnnotated, installHighlighter } from "./element-shots.mjs";
 import { captureKeyboardEvidence } from "./keyboard-evidence.mjs";
 import { exploreInteractions } from "./interact.mjs";
+import { templatize } from "./url-template.mjs";
+import { createScope } from "./url-scope.mjs";
 import { auditPageAi } from "./ai-audit.mjs";
 import { dedupeFindings } from "./ai-dedupe.mjs";
 import { smellToFinding } from "./replay.mjs";
@@ -86,6 +88,10 @@ export function createCrawler() {
       try {
         const u = new URL(action.href, origin);
         if (u.origin !== origin) return false;              // stay on-origin
+        // Scope filter: keep the crawl inside the paths the user asked for
+        // (e.g. /ecare). A link outside scope is not followed, which is what
+        // stops a start at /ecare from wandering into /login or a sibling portal.
+        if (!scope.allows(u.href)) return false;
         if (visited.has(u.origin + u.pathname)) return false;
       } catch { return false; }
     }
@@ -176,7 +182,36 @@ export function createCrawler() {
     // once per page. Reset every run because it lives in this closure.
     const scanCache = { interaction: new Set() };
     const urlList = Array.isArray(opts.urlList) ? opts.urlList.filter(u => typeof u === "string" && u.trim()) : null;
-    const maxPages = urlList ? Math.min(urlList.length, 100) : Math.min(opts.maxPages ?? 10, 40);
+    // Path scope, e.g. ["/ecare", "/ecare/*"] or "!/ecare/logout". Keeps a crawl
+    // inside the area under test and out of login/marketing/sibling portals.
+    const scope = createScope(opts.scope);
+    // Ceiling raised 40 -> 1000 so a large site can be covered from a start URL.
+    // But 1000 near-identical pages is repetition, not coverage — see the
+    // template budget below, which is what actually makes a high ceiling useful
+    // instead of just expensive.
+    const maxPages = urlList ? Math.min(urlList.length, 1000) : Math.min(opts.maxPages ?? 50, 1000);
+
+    // Template-aware coverage. On an SPA, /shop/tilbehoer/{productId} may have 150
+    // pages with the same component tree; auditing all 150 spends the whole budget
+    // re-checking one template. Instead we scan every DISTINCT route template plus
+    // up to N representatives each, so the budget goes to unseen structure. Applies
+    // to the discovery crawl; a URL list the user supplied is scanned as given.
+    const perTemplate = Math.max(1, Number(opts.representativesPerTemplate) || 3);
+    const templateCoverage = opts.templateCoverage !== false && !urlList;
+    const templateCounts = new Map();   // pathTemplate -> how many scanned so far
+    function templateBudgetLeft(rawUrl) {
+      if (!templateCoverage) return true;
+      let tpl;
+      try { tpl = templatize(rawUrl).pathTemplate; } catch { tpl = rawUrl; }
+      const seen = templateCounts.get(tpl) || 0;
+      return seen < perTemplate;
+    }
+    function noteTemplate(rawUrl) {
+      if (!templateCoverage) return;
+      let tpl;
+      try { tpl = templatize(rawUrl).pathTemplate; } catch { tpl = rawUrl; }
+      templateCounts.set(tpl, (templateCounts.get(tpl) || 0) + 1);
+    }
 
     state.running = true;
     state.startedAt = new Date().toISOString();
@@ -184,11 +219,29 @@ export function createCrawler() {
     state.pageShots = {};   // scan-row key -> { shot(base64), w, h } (one full-page shot per row)
     state.unitsDone = 0;
     state.unitsTotal = 0;
+    state.templateSkipped = 0;
     state.redirects = { list: [], failed: [], auth: 0, warned: false };
     state.stage = "scanning";
     state.log = [];
     state.error = null;
     state.result = null;
+
+    // Tell the user what an AI Full Scan is about to cost BEFORE it spends anything.
+    // The audit issues one request per page plus (roughly) one per interaction-
+    // revealed state, so the honest estimate multiplies the page budget by an
+    // interaction factor. Deterministic Full Scan costs nothing, so we only warn
+    // for the AI path.
+    const aiOn = !!(opts.aiAudit && ai && ai.provider);
+    if (aiOn) {
+      const basePages = urlList ? Math.min(urlList.length, maxPages)
+        : (templateCoverage ? Math.min(maxPages, 60) : maxPages);   // discovery is hard to know up front; 60 is a realistic cap to reason about
+      const withStates = opts.interact === false ? basePages : Math.round(basePages * 3.9); // ~2.9 states/page seen on the ECom/ECare configs
+      state.aiEstimate = { pages: basePages, estimatedRequests: withStates, interactionIncluded: opts.interact !== false };
+      log(`AI Full Scan estimate: ~${withStates} model request(s) across ~${basePages} page(s)${opts.interact === false ? "" : " and their interaction states"}.`);
+      if (withStates > 200) {
+        log(`⚠ That is a large number of AI requests. Free tiers (e.g. OpenRouter 50/day) will not cover it — consider a deterministic Full Scan, or narrow the start point.`);
+      }
+    }
 
     function recordScan(url, title, violations, keyboard = null, meta = {}) {
       const u = new URL(url);
@@ -407,6 +460,9 @@ export function createCrawler() {
           try { target = new URL(trimmed, origin); } catch { log(`Skipping invalid URL: "${trimmed}"`); continue; }
           if (!/^https?:$/.test(target.protocol)) { log(`Skipping non-http(s) URL: "${trimmed}"`); continue; }
           if (target.origin !== origin) { log(`Skipping off-origin URL (safety — must match ${origin}): ${trimmed}`); continue; }
+          // Respect the scope filter for supplied lists as well, so a mixed list
+          // can be narrowed to /ecare without editing the file.
+          if (!scope.allows(target.href)) { log(`Skipping out-of-scope URL: ${target.pathname}`); continue; }
           const pageKey = target.origin + target.pathname;
           if (visited.has(pageKey)) { log(`Skipping duplicate: ${trimmed}`); continue; }
           visited.add(pageKey);
@@ -478,23 +534,41 @@ export function createCrawler() {
       } else {
         state.unitsTotal = maxPages;
         log(`Crawl started at ${origin} (max ${maxPages} pages).`);
-        while (state.pagesScanned.length < maxPages && state.running) {
+        if (scope.active) log(`Scope: staying within ${scope.includeCount} include pattern(s)${scope.excludeCount ? `, ${scope.excludeCount} exclusion(s)` : ""}.`);
+        // Bound by pages VISITED, not pages scanned. With template coverage on,
+        // skipped repeats never grow pagesScanned, so a scanned-count condition
+        // would let the crawl walk an unbounded number of near-identical pages.
+        // visited.size is the true amount of work done. A generous multiple of
+        // maxPages lets discovery find enough distinct templates without running away.
+        const visitCeiling = Math.max(maxPages, maxPages * 6, 200);
+        while (state.pagesScanned.length < maxPages && visited.size < visitCeiling && state.running) {
           const url = new URL(page.url());
           const pageKey = url.origin + url.pathname;
           state.currentUrl = page.url();
 
           if (!visited.has(pageKey)) {
             visited.add(pageKey);
-            const title = await page.title().catch(() => "");
-            log(`Scanning: ${title || pageKey}`);
-            const violations = await scanPage(page, { elementScreenshots: opts.elementScreenshots });
-            const kb = opts.keyboardEvidence === false
-              ? null
-              : await captureKeyboardEvidence(page).catch(() => null);
-            const aiFindings = await runAiAudit(page, page.url(), violations, kb);
-            recordScan(page.url(), title, [...violations, ...aiFindings], kb);
-            await runInteractionPass(page, page.url(), title);
-            state.unitsDone++;
+            // Have we already scanned enough pages of this route template? If so,
+            // skip the expensive work (scan + AI + interaction) but keep crawling
+            // its links — the 121st product page has nothing new to show, but it
+            // may still link somewhere we have not been.
+            if (!templateBudgetLeft(page.url())) {
+              let tpl; try { tpl = templatize(page.url()).pathTemplate; } catch { tpl = pageKey; }
+              log(`Skipping ${url.pathname} — already covered ${perTemplate} page(s) of ${tpl}.`);
+              state.templateSkipped = (state.templateSkipped || 0) + 1;
+            } else {
+              const title = await page.title().catch(() => "");
+              log(`Scanning: ${title || pageKey}`);
+              const violations = await scanPage(page, { elementScreenshots: opts.elementScreenshots });
+              const kb = opts.keyboardEvidence === false
+                ? null
+                : await captureKeyboardEvidence(page).catch(() => null);
+              const aiFindings = await runAiAudit(page, page.url(), violations, kb);
+              recordScan(page.url(), title, [...violations, ...aiFindings], kb);
+              noteTemplate(page.url());
+              await runInteractionPass(page, page.url(), title);
+              state.unitsDone++;
+            }
           }
 
           if (state.pagesScanned.length >= maxPages) break;
@@ -538,6 +612,13 @@ export function createCrawler() {
         // What a URL list actually reached. Without this a report saying
         // "31 pages" hides that 6 were requested and never scanned.
         redirects: state.redirects,
+        // Coverage transparency: how many distinct route templates were scanned
+        // and how many repeat pages were deliberately skipped, so "42 pages" is
+        // understood as "42 meaningful pages", not "we stopped early".
+        coverage: templateCoverage
+          ? { templates: templateCounts.size, representativesPerTemplate: perTemplate, skipped: state.templateSkipped || 0 }
+          : null,
+        aiEstimate: state.aiEstimate ?? null,
       };
       // When AI Full Scan ran, attach the token usage + priced cost across every
       // page it audited, so the AI cost report can bill the whole crawl as one job.
@@ -598,6 +679,9 @@ export function createCrawler() {
         }
         const stateNote = state.aiAuditStates ? ` + ${state.aiAuditStates} revealed state(s)` : "";
         log(`AI audit: ${state.aiAuditPages} pages${stateNote}, ${state.aiUsage.inputTokens + state.aiUsage.outputTokens} tokens, ${cost.usd === null ? "unpriced" : "$" + (cost.usd ?? 0).toFixed(4)}.`);
+      }
+      if (templateCoverage && templateCounts.size) {
+        log(`Coverage: ${templateCounts.size} distinct route template(s), ${state.templateSkipped || 0} repeat page(s) skipped.`);
       }
       log(`Done. ${state.pagesScanned.length} pages, ${violations.length} failing rules, average score ${avg}.`);
     } catch (e) {
