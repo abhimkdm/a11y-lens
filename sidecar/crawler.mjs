@@ -18,7 +18,7 @@ import { captureElementScreenshots, captureFullPageAnnotated, installHighlighter
 import { captureKeyboardEvidence } from "./keyboard-evidence.mjs";
 import { captureRealKeyboardNav } from "./keyboard-nav.mjs";
 import { exploreInteractions } from "./interact.mjs";
-import { templatize } from "./url-template.mjs";
+import { templatize, canonicalKey } from "./url-template.mjs";
 import { createScope } from "./url-scope.mjs";
 import { auditPageAi } from "./ai-audit.mjs";
 import { dedupeFindings } from "./ai-dedupe.mjs";
@@ -93,7 +93,7 @@ export function createCrawler() {
         // (e.g. /ecare). A link outside scope is not followed, which is what
         // stops a start at /ecare from wandering into /login or a sibling portal.
         if (!scope.allows(u.href)) return false;
-        if (visited.has(u.origin + u.pathname)) return false;
+        if (visited.has(canonicalKey(u.href))) return false;
       } catch { return false; }
     }
     return true;
@@ -296,7 +296,10 @@ export function createCrawler() {
       const u = new URL(url);
       // One screenshot per scan row (page or interaction-revealed state), named by
       // the row so a drawer's state doesn't overwrite the base page's image.
-      const shotKey = `${u.pathname}${u.search}||${title || ""}`;
+      // Uses the same canonical identity as the visited set, so tracking params
+      // cannot produce two shot slots for one page (or, worse, make a finding
+      // point at a shot key that was never stored).
+      const shotKey = `${canonicalKey(u.href)}||${title || ""}`;
       if (state.__pendingShot) {
         state.pageShots[shotKey] = state.__pendingShot;
         state.__pendingShot = null;
@@ -479,7 +482,7 @@ export function createCrawler() {
           // SPA checkpoints often share a URL; disambiguate so recordScan does
           // not merge two genuinely different states into one row.
           let pageKey;
-          try { const u = new URL(url); pageKey = u.origin + u.pathname + u.search; } catch { pageKey = url; }
+          pageKey = canonicalKey(url);
           if (visited.has(pageKey)) { url = `${url}#state-${i + 1}`; }
           visited.add(pageKey);
 
@@ -519,7 +522,7 @@ export function createCrawler() {
           // Respect the scope filter for supplied lists as well, so a mixed list
           // can be narrowed to /ecare without editing the file.
           if (!scope.allows(target.href)) { log(`Skipping out-of-scope URL: ${target.pathname}`); continue; }
-          const pageKey = target.origin + target.pathname;
+          const pageKey = canonicalKey(target.href);
           if (visited.has(pageKey)) { log(`Skipping duplicate: ${trimmed}`); continue; }
           visited.add(pageKey);
 
@@ -540,7 +543,7 @@ export function createCrawler() {
           const landed = new URL(page.url());
           const sameRoute = landed.origin === target.origin && landed.pathname === target.pathname;
           if (!sameRoute) {
-            const landedKey = landed.origin + landed.pathname;
+            const landedKey = canonicalKey(landed.href);
             const authish = AUTH_RE.test(landed.pathname) || AUTH_RE.test(landed.search);
             state.redirects.list.push({ requested: target.href, landed: landed.href, auth: authish });
 
@@ -621,7 +624,7 @@ export function createCrawler() {
         const visitCeiling = Math.max(maxPages, maxPages * 6, 200);
         while (state.pagesScanned.length < maxPages && visited.size < visitCeiling && state.running) {
           const url = new URL(page.url());
-          const pageKey = url.origin + url.pathname;
+          const pageKey = canonicalKey(url.href);
           state.currentUrl = page.url();
 
           // A page may have been navigated to in-bounds but REDIRECTED out of scope

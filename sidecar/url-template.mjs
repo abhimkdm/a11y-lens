@@ -131,7 +131,48 @@ function toRegexSource(outSegs) {
 }
 function escapeRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
-// Fill a template from a variable store: /customer/{customerId} -> /customer/9911
+// Canonical identity for "have I already scanned this page?".
+//
+// Getting this wrong fails in both directions, and both are costly:
+//
+//   too COARSE (origin + pathname only)
+//     /shop?page=2 and /shop?page=3 collapse into one, so paginated and filtered
+//     content is never scanned past the first page — silent under-coverage.
+//
+//   too FINE (whole URL verbatim)
+//     /shop?utm_source=mail and /shop?utm_source=sms become two scans of the
+//     identical page — duplicate rows, duplicate findings, inflated totals, and on
+//     an AI scan, real money spent twice for the same evidence.
+//
+// So: drop the params that never change content, keep the ones that do, and put
+// them in a stable order so ?a=1&b=2 and ?b=2&a=1 are recognised as one page.
+export function canonicalKey(rawUrl, opts = {}) {
+  let u;
+  try { u = new URL(rawUrl); } catch { return String(rawUrl || ""); }
+
+  const params = [];
+  for (const [k, v] of u.searchParams.entries()) {
+    if (isUnstableParam(k)) continue;              // utm_*, sessionId, timestamp, token…
+    params.push([k, v]);
+  }
+  // Sort so parameter ORDER never creates a phantom second page.
+  params.sort((a, b) => (a[0] === b[0] ? (a[1] < b[1] ? -1 : 1) : a[0] < b[0] ? -1 : 1));
+  const search = params.length
+    ? "?" + params.map(([k, v]) => `${k}=${v}`).join("&")
+    : "";
+
+  // Trailing slash is not a different page.
+  let path = u.pathname.replace(/\/+$/, "");
+  if (!path) path = "/";
+
+  // The hash is normally a fragment of the SAME document, so it must not create a
+  // second scan — EXCEPT for the markers we add ourselves to distinguish genuine
+  // SPA states that share a URL (#state-2), which are different content.
+  const hash = /^#state-\d+$/.test(u.hash) ? u.hash : "";
+
+  const host = u.host.toLowerCase();
+  return `${u.protocol}//${host}${path}${opts.ignoreQuery ? "" : search}${hash}`;
+}
 export function expandTemplate(template, vars = {}) {
   if (!template) return null;
   let missing = false;
