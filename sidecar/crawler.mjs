@@ -16,6 +16,7 @@ import { createRequire } from "node:module";
 import { aiChat } from "./ai.mjs";
 import { captureElementScreenshots, captureFullPageAnnotated, installHighlighter } from "./element-shots.mjs";
 import { captureKeyboardEvidence } from "./keyboard-evidence.mjs";
+import { captureRealKeyboardNav } from "./keyboard-nav.mjs";
 import { exploreInteractions } from "./interact.mjs";
 import { templatize } from "./url-template.mjs";
 import { createScope } from "./url-scope.mjs";
@@ -319,6 +320,10 @@ export function createCrawler() {
           {
             scanPage: (p) => scanPage(p, { elementScreenshots: opts.elementScreenshots, interactionState: true }),
             captureKeyboard: (p) => captureKeyboardEvidence(p),
+            // Real Tab-key navigation on each revealed state — finds focus traps
+            // in modals/drawers that the simulated focus walk cannot. Additive and
+            // self-guarding; disabled together with the rest of the keyboard checks.
+            keyboardNav: opts.keyboardEvidence === false ? null : (p) => captureRealKeyboardNav(p),
             log,
             // Scan-wide de-duplication of interactive controls (see scanCache).
             dedupe: {

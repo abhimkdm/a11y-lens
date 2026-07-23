@@ -140,8 +140,32 @@ export function readInteractionState() {
 // copy of the axe config to drift out of sync).
 //   deps.scanPage(page)            -> violations[]   (same axe run the crawler uses)
 //   deps.captureKeyboard(page)     -> keyboard evidence | null
+//   deps.keyboardNav(page)         -> real-Tab navigation probe | null (optional)
 //   deps.log(msg)                  -> progress line
 // ---------------------------------------------------------------------------
+
+// Run the real-Tab-key navigation probe on the CURRENT state and return its
+// findings already shaped like measured findings, so they merge straight into a
+// scenario's violations. A modal/drawer is exactly where a real focus trap lives,
+// and only a real keypress finds it — the simulated focus walk cannot. Never
+// throws; if the probe is not injected or fails, returns [].
+async function realKeyboardFindings(page, deps, enabled) {
+  if (!enabled || !deps.keyboardNav) return [];
+  const nav = await deps.keyboardNav(page).catch(() => null);
+  if (!nav || !nav.findings?.length) return [];
+  return nav.findings.map((f) => ({
+    id: f.rule,
+    source: "keyboard-nav",
+    impact: f.impact,
+    description: f.title,
+    help: f.explanation,
+    wcag: f.wcag,
+    recommendation: f.explanation,
+    evidence: f.evidence,
+    nodes: f.selector ? [{ target: f.selector, html: f.evidence?.slice(0, 200) ?? "" }] : [],
+  }));
+}
+
 // Stable signature for a candidate control, used to de-duplicate identical
 // controls across pages within one scan. Digits are collapsed (Item 1 / Item 2
 // → same component) and the name is normalized so the header "Filter" on 158
@@ -254,6 +278,9 @@ async function openAndCheck(page, candidate, { gear, deps, keyboardEvidence, log
 
   const violations = await deps.scanPage(page).catch(() => []);
   const keyboard = keyboardEvidence ? await deps.captureKeyboard(page).catch(() => null) : null;
+  // Real Tab-key navigation on the OPEN state, before the Escape probe below can
+  // dismiss the dialog. This is where a focus trap actually shows up.
+  const realNavFindings = await realKeyboardFindings(page, deps, keyboardEvidence);
 
   // Family-specific checks become synthetic, PRE-VERIFIED findings (measured
   // facts, not model opinions) — same treatment as the keyboard probe.
@@ -340,7 +367,7 @@ async function openAndCheck(page, candidate, { gear, deps, keyboardEvidence, log
 
   return {
     label: `Interaction: ${triggerLabel}`,
-    violations: [...measured, ...violations, ...aiFindings],
+    violations: [...measured, ...realNavFindings, ...violations, ...aiFindings],
     keyboard,
     shot: violations.__shot ?? null,   // screenshot of THIS revealed state
     meta: { kind: candidate.kind, trigger: triggerLabel, gear, aiAudited: !!deps.auditState },
@@ -439,6 +466,7 @@ async function probeValidation(page, { gear, deps, keyboardEvidence, log }) {
 
   const violations = await deps.scanPage(page).catch(() => []);
   const keyboard = keyboardEvidence ? await deps.captureKeyboard(page).catch(() => null) : null;
+  const realNavFindings = await realKeyboardFindings(page, deps, keyboardEvidence);
   log(`Validation probe: ${gotErrors ? "errors surfaced" : "no error state detected"}, ${measured.length} finding(s).`);
 
   // AI expert audit of the surfaced error state — error announcement quality,
@@ -459,7 +487,7 @@ async function probeValidation(page, { gear, deps, keyboardEvidence, log }) {
 
   return {
     label: "Interaction: form validation (empty submit)",
-    violations: [...measured, ...violations, ...aiFindings],
+    violations: [...measured, ...realNavFindings, ...violations, ...aiFindings],
     keyboard,
     shot: violations.__shot ?? null,
     meta: { kind: "validation", gear, aiAudited: !!deps.auditState },
@@ -547,6 +575,7 @@ async function fillAndSubmit(page, { valueProfile, deps, log, valueLog, keyboard
 
   const violations = await deps.scanPage(page).catch(() => []);
   const keyboard = keyboardEvidence ? await deps.captureKeyboard(page).catch(() => null) : null;
+  const realNavFindings = await realKeyboardFindings(page, deps, keyboardEvidence);
 
   // AI expert audit of the post-submit state (success confirmation, error
   // summary, or the page the submit navigated to) — announcement + focus.
@@ -563,7 +592,7 @@ async function fillAndSubmit(page, { valueProfile, deps, log, valueLog, keyboard
 
   return {
     label: "Interaction: form filled & submitted (Operate)",
-    violations: [...violations, ...aiFindings],
+    violations: [...realNavFindings, ...violations, ...aiFindings],
     keyboard,
     shot: violations.__shot ?? null,
     meta: { kind: "operate-submit", gear: "Operate", submitLabel, fieldsFilled: valueLog.filter((v) => v.value != null).length, aiAudited: !!deps.auditState },
