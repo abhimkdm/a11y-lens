@@ -194,6 +194,13 @@ export async function settleForCapture(page, opts = {}) {
   const idleMs = opts.networkIdleMs ?? 2500;  // max wait for network to go quiet
   const maxScrollMs = opts.maxScrollMs ?? 4000;
 
+  // Move the virtual pointer out of the way first. If it is left sitting on a
+  // control, that control screenshots in its :hover state — evidence showing a
+  // highlight the real user never triggered, and in the worst case a tooltip or
+  // hover menu covering the very element the callout points at. (Playwright's
+  // pointer is internal to the browser; the OS cursor is never moved.)
+  try { await page.mouse.move(0, 0); } catch { /* best-effort */ }
+
   try {
     // 1 · Walk the page top-to-bottom to bring lazy content into view, then back
     // to the top so the capture starts from a clean origin. Bounded by both a

@@ -1,37 +1,51 @@
-# A11y Lens — interaction states now keep their own screenshot
+# A11y Lens — remembered form-filling profile + no stray pointer movement
 
-`node --check` clean; ordering bug reproduced and verified fixed.
+`node --check` + `tsc -b` + `vite build` clean. 17 suites pass, including
+no-regression. Profile routes verified against a live sidecar.
 
 ## Files
-    sidecar/crawler.mjs    (carries the shot on the returned violations; restores per scenario)
-    sidecar/interact.mjs   (each scenario carries the screenshot of its own state)
+    sidecar/server.mjs               (profile persistence, stripSecrets, 2 routes)
+    sidecar/interact.mjs             (parkMouse after every interaction)
+    sidecar/element-shots.mjs        (park the pointer before every screenshot)
+    scripts/test-profile-pointer.mjs (NEW)
 
-## What your uploaded report actually shows
-I measured it rather than guessing. Across the 6 finding cards:
-    Evidence rows ......... 6 / 6   (100% — every card HAS evidence, with real DOM snippets)
-    Fix rows .............. 6 / 6
-    Screenshots ........... 3 / 6   <-- the actual gap
-    AI findings ........... 0 / 6   <-- see below
-So text evidence is being captured. What is missing on half the cards is the
-VISUAL evidence, and it is missing specifically on the interaction-state pages.
+## 1 · Form filling is now remembered
+`valueProfile` was accepted per request and never stored, so the Operate gear's
+test values had to be retyped before every run. That friction is why form testing
+gets skipped — and forms are where the worst accessibility defects live.
 
-## The bug
-`exploreInteractions` scans EVERY revealed state first, then the crawler records
-them all afterwards. The screenshot was held in one shared slot, so each state's
-scan overwrote the previous one — the first recorded state consumed the LAST
-state's image, and the rest got nothing. Verified: 3 states in, exactly 1 image
-out, and attached to the wrong state.
-Now each scenario carries the screenshot captured while THAT state was open
-(non-enumerable, so it never bloats the session JSON), and the crawler restores it
-just before recording that row.
+Now: a profile sent with a run WINS and is saved; if none is sent, the last saved
+one is reused. Two routes to manage it:
 
-## The other half: ZERO AI findings in this report
-All 6 findings are `Automated` (axe). Not one `AI` badge. That matches the logs you
-sent earlier: `AI audit failed ... Can't reach nvidia (operation aborted due to
-timeout)`. The AI reviewer is timing out, so its findings — the ones with the rich
-"keyboard walk step 7 ..." evidence you are expecting — are never produced.
-That is a provider/timeout problem, not a report problem, and no report change will
-surface findings that were never generated. Fix options (say which):
-  1. retry with backoff around the AI call, so one timeout doesn't cost a page;
-  2. raise the request timeout / lower `maxTokens` for the audit;
-  3. switch the audit to a faster model and keep nvidia for the report pass.
+    GET    /settings/value-profile     read back what is remembered
+    DELETE /settings/value-profile     forget it entirely
+
+**What is deliberately NOT remembered:** anything credential-shaped. Field names
+matching password / passcode / pwd / secret / token / otp / pin / cvv / cvc / ssn /
+cpr / card number / iban / apiKey are stripped before saving, at any nesting depth.
+Ordinary test data (name, email, phone, postcode, address) is kept. A tool that
+quietly persisted a password to disk would be a liability no matter how convenient.
+
+## 2 · No stray pointer movement
+First, the thing that is NOT happening: Playwright drives a pointer INSIDE the
+browser. It never moves the operating system cursor, so your real mouse is never
+touched and nothing can wander across your screen.
+
+The genuine problem was subtler. `locator.click()` moves that virtual pointer onto
+the target and LEAVES it there, which meant:
+
+  * the clicked control (and its ancestors) stayed in `:hover`, so a hover-reveal
+    menu could remain open and bleed into the NEXT state scanned — findings then
+    attributed to the wrong screen;
+  * hover-driven analytics and tooltip timers kept firing on a control the tool
+    touched, which is activity the user never performed;
+  * screenshots caught elements in their hover state — a highlight the real user
+    never triggered, and sometimes a tooltip covering the very element the red
+    callout points at.
+
+The pointer is now parked at (0,0) after opening a state, after reversing one, and
+before every capture. Parking is best-effort and never throws, so a page without a
+pointer API cannot break a scan.
+
+The one intentional hover remains: `replay.mjs` hovers to open hover-reveal menus,
+because that is the interaction being tested rather than an accident.

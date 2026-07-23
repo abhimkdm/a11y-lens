@@ -166,6 +166,24 @@ async function realKeyboardFindings(page, deps, enabled) {
   }));
 }
 
+// Park the virtual pointer out of the way.
+//
+// Clicking through Playwright moves the browser's virtual mouse onto the target
+// and LEAVES it there. That has two side effects we do not want during an audit:
+//
+//   * the element (and its ancestors) stay in :hover, so a hover-reveal menu can
+//     remain open and bleed into the NEXT state we scan — findings then get
+//     attributed to the wrong screen;
+//   * hover-driven analytics and tooltip timers keep firing on a control the tool
+//     touched, which is activity the user never performed.
+//
+// Moving the pointer to the top-left corner clears :hover without clicking
+// anything. Note this is the BROWSER's virtual pointer only — Playwright never
+// moves the operating system cursor, so the user's real mouse is untouched.
+async function parkMouse(page) {
+  try { await page.mouse.move(0, 0); } catch { /* pointer parking is best-effort */ }
+}
+
 // Stable signature for a candidate control, used to de-duplicate identical
 // controls across pages within one scan. Digits are collapsed (Item 1 / Item 2
 // → same component) and the name is normalized so the header "Filter" on 158
@@ -254,8 +272,13 @@ async function openAndCheck(page, candidate, { gear, deps, keyboardEvidence, log
       await page.getByText(triggerLabel, { exact: false }).first().click({ timeout: 5000 });
     }
     clicked = true;
+    // Move the pointer off the trigger before we look at the result, so the state
+    // we scan is the one the CLICK produced — not that state plus a hover effect
+    // the tool is still holding open on the button it pressed.
+    await parkMouse(page);
   } catch (e) {
     log(`Could not activate "${triggerLabel}": ${String(e).slice(0, 80)}`);
+    await parkMouse(page);
     return null;
   }
   if (!clicked) return null;
@@ -402,6 +425,9 @@ async function reverse(page) {
       const closer = page.locator('[aria-label*="close" i], [title*="close" i], button:has-text("Close"), button:has-text("Cancel")').first();
       if (await closer.count()) await closer.click({ timeout: 2000 }).catch(() => {});
     }
+    // Leave the pointer parked, so the next candidate is evaluated on a page with
+    // no lingering hover state from the control we just used to close this one.
+    await parkMouse(page);
   } catch { /* leave it; next state read will still be honest */ }
 }
 

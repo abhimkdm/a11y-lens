@@ -578,7 +578,18 @@ app.post("/scan/full/start", (req, res) => {
   // pointed at the wrong host is visible after the fact.
   const interact = !!req.body?.interact;
   const allowMutations = interact && req.body?.allowMutations === true;
-  const valueProfile = req.body?.valueProfile ?? null;
+  // Form-filling values are REMEMBERED between runs. Retyping a test profile
+  // before every Operate scan is friction that makes people skip form testing
+  // altogether — and forms are where the worst accessibility defects live. A
+  // profile sent with the request wins and is saved; otherwise the last saved one
+  // is reused.
+  //
+  // What is NOT remembered: anything that looks like a credential. Test data is
+  // fine to keep on disk; a password is not, and a tool that quietly persisted one
+  // would be a liability regardless of how convenient it is.
+  const sentProfile = req.body?.valueProfile ?? null;
+  const valueProfile = sentProfile ?? (settings.get("valueProfile") ?? null);
+  if (sentProfile) settings.set("valueProfile", stripSecrets(sentProfile));
   // AI Full Scan: run the per-page manual-reviewer AI audit alongside axe.
   // Needs a working provider (the audit is the whole point), so fail clearly if
   // one wasn't resolved rather than silently running a plain Full Scan.
@@ -1321,6 +1332,30 @@ app.post("/sessions/import", (req, res) => {
 });
 
 // ---- Phase 13: comparison ----------------------------------------------
+// Remove credential-like entries from a saved form-filling profile. Matching is
+// on the FIELD NAME, not the value — a password is a password whatever it holds.
+function stripSecrets(profile) {
+  if (!profile || typeof profile !== "object") return profile;
+  const SECRET = /(pass(word|code)?|pwd|secret|token|otp|pin|cvv|cvc|ssn|cpr|card(number)?|iban|apikey|api_key)/i;
+  const out = Array.isArray(profile) ? [] : {};
+  for (const [k, v] of Object.entries(profile)) {
+    if (SECRET.test(k)) continue;
+    out[k] = v && typeof v === "object" ? stripSecrets(v) : v;
+  }
+  return out;
+}
+
+// The remembered form-filling profile: read it back, or forget it entirely.
+app.get("/settings/value-profile", (_req, res) => {
+  res.json({ ok: true, valueProfile: settings.get("valueProfile") ?? null });
+});
+
+app.delete("/settings/value-profile", (_req, res) => {
+  settings.set("valueProfile", null);
+  audit.log("settings.valueProfile", "cleared");
+  res.json({ ok: true, cleared: true });
+});
+
 app.post("/compare", (req, res) => {
   const { prevId, currId } = req.body ?? {};
   const a = sessions.get(+prevId), b = sessions.get(+currId);
