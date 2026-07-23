@@ -32,11 +32,21 @@ function pageKey(p) {
   }
 }
 
+// Identity of a single occurrence (one failing element), not of a whole finding.
+// Merging has to work at THIS level: two scans of the same page report the same
+// rule, but their node lists can differ — scan A finds 2 bad images, scan B finds
+// those 2 plus a third that only appears when logged in. Keying on the finding as
+// a whole (or on its first node) would drop B entirely and lose that third image.
+function nodeKey(n) {
+  const t = (n && (n.target || n.html || n.selector)) || "";
+  return String(t).replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
+// Identity of a finding WITHIN a page: the rule, plus its source so an AI
+// observation is never silently folded into a measured axe result.
 function findingKey(f, pKey) {
-  const target = Array.isArray(f.nodes) && f.nodes[0]
-    ? (f.nodes[0].target || f.nodes[0].html || "")
-    : (f.evidence || "");
-  return `${f.id || f.rule}||${pKey}||${String(target).slice(0, 120)}`;
+  const src = String(f.source || "").toLowerCase().startsWith("ai") ? "ai" : "auto";
+  return `${f.id || f.rule}||${src}||${pKey}`;
 }
 
 export function mergeSessions(sessions, opts = {}) {
@@ -69,9 +79,36 @@ export function mergeSessions(sessions, opts = {}) {
   }
 
   const pages = new Map();       // pageKey -> merged page
+  const findingIndex = new Map(); // `${pageKey}::${findingKey}` -> finding object
   const pageShots = {};
-  const seenFinding = new Set();
-  const stats = { sources: [], pagesFromBoth: 0, duplicateFindingsDropped: 0 };
+  const stats = { sources: [], pagesFromBoth: 0, duplicateFindingsDropped: 0, duplicateOccurrencesDropped: 0 };
+
+  // Add one incoming finding to a page, merging it into an existing finding of the
+  // same rule+source rather than appending a second copy.
+  function absorb(targetPage, pKey, v) {
+    const fk = `${pKey}::${findingKey(v, pKey)}`;
+    const existing = findingIndex.get(fk);
+    if (!existing) {
+      const copy = { ...v, nodes: [...(v.nodes ?? [])] };
+      findingIndex.set(fk, copy);
+      targetPage.violations.push(copy);
+      return;
+    }
+    // Same rule already recorded for this page: union the OCCURRENCES. This is
+    // where duplicates actually get removed — and where a node the other scan
+    // uniquely saw is preserved instead of thrown away.
+    stats.duplicateFindingsDropped++;
+    const seenNodes = new Set((existing.nodes ?? []).map(nodeKey));
+    for (const n of v.nodes ?? []) {
+      const k = nodeKey(n);
+      if (seenNodes.has(k)) { stats.duplicateOccurrencesDropped++; continue; }
+      seenNodes.add(k);
+      existing.nodes.push(n);
+    }
+    if (!existing.__fromScan?.includes(v.__fromScan)) {
+      existing.__fromScan = [existing.__fromScan, v.__fromScan].filter(Boolean).join(" + ");
+    }
+  }
 
   list.forEach((s, si) => {
     const label = s.title || s.url || `Scan ${si + 1}`;
@@ -92,37 +129,16 @@ export function mergeSessions(sessions, opts = {}) {
       }));
 
       if (!pages.has(k)) {
-        pages.set(k, {
-          ...p,
-          violations: [],
-          mergedFrom: [label],
-        });
-        for (const v of incoming) {
-          const fk = findingKey(v, k);
-          if (seenFinding.has(fk)) { stats.duplicateFindingsDropped++; continue; }
-          seenFinding.add(fk);
-          pages.get(k).violations.push(v);
-        }
+        pages.set(k, { ...p, violations: [], mergedFrom: [label] });
       } else {
-        // Same page in both scans: keep one row, merge findings, dedupe.
-        const target = pages.get(k);
-        if (!target.mergedFrom.includes(label)) {
-          target.mergedFrom.push(label);
-          stats.pagesFromBoth++;
-        }
-        for (const v of incoming) {
-          const fk = findingKey(v, k);
-          if (seenFinding.has(fk)) { stats.duplicateFindingsDropped++; continue; }
-          seenFinding.add(fk);
-          target.violations.push(v);
-        }
+        const t = pages.get(k);
+        if (!t.mergedFrom.includes(label)) { t.mergedFrom.push(label); stats.pagesFromBoth++; }
         // Keep the WORSE score — a merged page is only as good as its worst run.
-        if (typeof p.score === "number" && typeof target.score === "number") {
-          target.score = Math.min(target.score, p.score);
-        }
-        // Prefer a page that actually has a screenshot.
-        if (!target.shotKey && p.shotKey) target.shotKey = p.shotKey;
+        if (typeof p.score === "number" && typeof t.score === "number") t.score = Math.min(t.score, p.score);
+        if (!t.shotKey && p.shotKey) t.shotKey = p.shotKey;
       }
+      const targetPage = pages.get(k);
+      for (const v of incoming) absorb(targetPage, k, v);
     }
   });
 

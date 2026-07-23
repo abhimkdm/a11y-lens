@@ -78,5 +78,33 @@ const v = (id, impact, target, source = "") => ({ id, impact, source, descriptio
   ck(threw, "merging fewer than two scans is refused");
 }
 
+
+// --- regression: occurrence-level merging (the data-loss bug) ---------------
+console.log("\n— occurrence-level dedup —");
+{
+  const p = (nodes) => [{ url: "https://h/ecare", title: "ECare", score: 80,
+    violations: [{ id: "image-alt", impact: "serious", nodes }] }];
+  // Scan A sees 2 bad images; scan B sees those 2 PLUS a third (login-only).
+  const a = mk("Run A", p([{ target: "img.a" }, { target: "img.b" }]));
+  const b = mk("Run B", p([{ target: "img.a" }, { target: "img.b" }, { target: "img.c" }]));
+  const m = mergeSessions([a, b]);
+  const f = m.pages[0].violations;
+  ck(f.length === 1, `same rule on same page -> ONE finding, not two (got ${f.length})`);
+  const targets = f[0].nodes.map((n) => n.target).sort();
+  ck(JSON.stringify(targets) === '["img.a","img.b","img.c"]',
+     `all THREE occurrences kept, duplicates removed (got ${JSON.stringify(targets)})`);
+  ck(m.mergeStats.duplicateOccurrencesDropped === 2, "the 2 repeated occurrences are counted as dropped");
+  ck(m.counts.serious === 1, "the merged rule counts once, not twice");
+}
+
+// AI and automated findings of the same rule must NOT be folded together
+{
+  const page = (source) => [{ url: "https://h/x", title: "X", score: 80,
+    violations: [{ id: "contrast", impact: "serious", source, nodes: [{ target: "p" }] }] }];
+  const m = mergeSessions([mk("Static", page("")), mk("AI", page("ai-audit"))]);
+  ck(m.pages[0].violations.length === 2,
+     "the same rule from AI and from axe stays as two findings (never launder AI into a measured fact)");
+}
+
 console.log(P ? "\nALL MERGE TESTS PASSED" : "\nSOME MERGE TESTS FAILED");
 process.exit(P ? 0 : 1);

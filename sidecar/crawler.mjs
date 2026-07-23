@@ -120,6 +120,49 @@ export function createCrawler() {
   // Paths that mean "you are not logged in", in the languages this tool meets.
   const AUTH_RE = /(^|\/)(login|signin|sign-in|log-in|auth|sso|oauth|account\/login|logon|identity|adfs|saml)(\/|$|\?)/i;
 
+  // Read the page's identity for the report row.
+  //
+  // Two things went wrong before this existed:
+  //  * TITLE was read immediately after navigation, before the page settled. On an
+  //    SPA, document.title is frequently still the PREVIOUS route's title at that
+  //    moment (the router updates it after render), so report rows showed the wrong
+  //    page name — or the app-shell title repeated on every row.
+  //  * A blank title left the row identified only by a URL, which is unreadable in
+  //    a management report.
+  //
+  // So: read late, allow a brief retry while the title is empty or clearly a
+  // placeholder, and fall back to the page's own H1 and then the path.
+  async function readPageIdentity(page, { retries = 3 } = {}) {
+    // Trailing ellipses and punctuation are common on placeholder titles
+    // ("Loading…", "Please wait..."), so normalise before testing.
+    const isPlaceholder = (t) => {
+      const n = String(t).toLowerCase().replace(/[.\u2026\s]+$/g, "").trim();
+      return !n || /^(loading|please wait|redirecting|untitled|document|react app|new tab|home)$/.test(n);
+    };
+    let title = "";
+    for (let i = 0; i < retries; i++) {
+      title = (await page.title().catch(() => "")).trim();
+      if (!isPlaceholder(title)) break;
+      await page.waitForTimeout(250).catch(() => {});
+    }
+    if (isPlaceholder(title)) {
+      // The document title is useless — name the row after what the user sees.
+      const h1 = await page.evaluate(() => {
+        const h = document.querySelector('h1, [role="heading"][aria-level="1"]');
+        return h ? (h.textContent || "").replace(/\s+/g, " ").trim().slice(0, 90) : "";
+      }).catch(() => "");
+      if (h1) title = h1;
+    }
+    // Read the URL late too: client-side routing can settle on a different path
+    // than the one we asked for, and the row must name what was actually scanned.
+    let url = page.url();
+    if (!title) {
+      try { const u = new URL(url); title = u.pathname === "/" ? u.hostname : u.pathname; }
+      catch { title = url; }
+    }
+    return { url, title };
+  }
+
   async function scanPage(page, opts = {}) {
     await page.evaluate(axeSource);
     // Third-party widget DOM (cookie banners, chat, analytics) can be excluded so
@@ -433,7 +476,6 @@ export function createCrawler() {
           if (!nav) break;
           await page.waitForTimeout(400);
           let url = nav.url;
-          const title = nav.title || (await page.title().catch(() => ""));
           // SPA checkpoints often share a URL; disambiguate so recordScan does
           // not merge two genuinely different states into one row.
           let pageKey;
@@ -442,8 +484,12 @@ export function createCrawler() {
           visited.add(pageKey);
 
           state.currentUrl = url;
-          log(`Scanning checkpoint ${i + 1}/${total}: ${title || pageKey}`);
+          log(`Scanning checkpoint ${i + 1}/${total}: ${nav.title || pageKey}`);
           const violations = await scanPage(page, { elementScreenshots: opts.elementScreenshots });
+          // The recorded label is authoritative for a replay — it names the step
+          // the author intended. Only fall back to the live page when it is absent,
+          // and read that AFTER the scan has settled the page.
+          const title = nav.title || (await readPageIdentity(page)).title;
           const kb = opts.keyboardEvidence === false ? null : await captureKeyboardEvidence(page).catch(() => null);
           const aiFindings = await runAiAudit(page, url, violations, kb);
           // Any control that could only be reached by XPath during replay is a
@@ -532,13 +578,17 @@ export function createCrawler() {
             log(`↪ ${target.pathname} redirected to ${landed.pathname} — scanning the destination.`);
           }
 
-          const scannedUrl = sameRoute ? target.href : page.url();
-          const title = await page.title().catch(() => "");
-          log(`Scanning: ${title || pageKey}`);
+          log(`Scanning: ${target.pathname}`);
           const violations = await scanPage(page, {
             elementScreenshots: opts.elementScreenshots,
             excludeSelectors: opts.excludeSelectors,
           });
+          // Identity is read AFTER the scan, because scanPage settles the page —
+          // before that the SPA may still be showing the previous route's title.
+          const ident = await readPageIdentity(page);
+          const scannedUrl = sameRoute ? (ident.url || target.href) : ident.url;
+          const title = ident.title;
+          log(`Scanned: ${title}`);
           const kb = opts.keyboardEvidence === false
             ? null
             : await captureKeyboardEvidence(page).catch(() => null);
@@ -592,16 +642,19 @@ export function createCrawler() {
               log(`Skipping ${url.pathname} — already covered ${perTemplate} page(s) of ${tpl}.`);
               state.templateSkipped = (state.templateSkipped || 0) + 1;
             } else {
-              const title = await page.title().catch(() => "");
-              log(`Scanning: ${title || pageKey}`);
+              log(`Scanning: ${url.pathname}`);
               const violations = await scanPage(page, { elementScreenshots: opts.elementScreenshots });
+              // After scanPage, the page has settled — only now is the title reliable.
+              const ident = await readPageIdentity(page);
+              const title = ident.title;
+              log(`Scanned: ${title}`);
               const kb = opts.keyboardEvidence === false
                 ? null
                 : await captureKeyboardEvidence(page).catch(() => null);
-              const aiFindings = await runAiAudit(page, page.url(), violations, kb);
-              recordScan(page.url(), title, [...violations, ...aiFindings], kb);
-              noteTemplate(page.url());
-              await runInteractionPass(page, page.url(), title);
+              const aiFindings = await runAiAudit(page, ident.url, violations, kb);
+              recordScan(ident.url, title, [...violations, ...aiFindings], kb);
+              noteTemplate(ident.url);
+              await runInteractionPass(page, ident.url, title);
               state.unitsDone++;
             }
           }
