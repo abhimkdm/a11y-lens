@@ -152,16 +152,21 @@ export function createCrawler() {
     // per page keeps a big crawl's payload sane; the boxes are tiny.
     if (opts.elementScreenshots !== false) {
       try {
-        const r = await captureFullPageAnnotated(page, violations, { maxPerRule: 3, maxTotal: 30 });
-        if (r.pageShot) {
-          const shot = { shot: r.pageShot, w: r.pageW, h: r.pageH };
-          // Held for the base-page recordScan…
+        const r = await captureFullPageAnnotated(page, violations, {
+          maxPerRule: 3, maxTotal: 30,
+          saveDir: opts.shotDir || null,
+          shotName: opts.shotDir ? `shot_${(state.__shotSeq = (state.__shotSeq || 0) + 1)}` : null,
+          // Interaction states are already open and visible — scrolling the page
+          // to trigger lazy content risks scrolling a modal out of view or firing
+          // a scroll-to-close handler. So for those, skip the scroll walk and just
+          // wait a short beat. Normal pages get the full lazy-load settle.
+          settleOpts: opts.interactionState
+            ? { settleMs: opts.captureSettleMs ?? 400, maxScrollMs: 0, networkIdleMs: 1200 }
+            : { settleMs: opts.captureSettleMs ?? 600 },
+        });
+        if (r.pageShot || r.shotPath) {
+          const shot = { shot: r.pageShot || null, shotPath: r.shotPath || null, w: r.pageW, h: r.pageH };
           state.__pendingShot = shot;
-          // …and ALSO carried on the returned array, because the interaction pass
-          // scans every revealed state BEFORE any of them are recorded. With a
-          // single shared slot the first state consumed the last state's image and
-          // the rest got none — which is why interaction pages had findings but no
-          // screenshots. Non-enumerable so it never lands in the session JSON.
           Object.defineProperty(r.violations, "__shot", { value: shot, enumerable: false });
         }
         return r.violations;
@@ -312,7 +317,7 @@ export function createCrawler() {
             keyboardEvidence: opts.keyboardEvidence !== false,
           },
           {
-            scanPage: (p) => scanPage(p, { elementScreenshots: opts.elementScreenshots }),
+            scanPage: (p) => scanPage(p, { elementScreenshots: opts.elementScreenshots, interactionState: true }),
             captureKeyboard: (p) => captureKeyboardEvidence(p),
             log,
             // Scan-wide de-duplication of interactive controls (see scanCache).
@@ -510,6 +515,14 @@ export function createCrawler() {
               log(`↪ ${target.pathname} redirects to ${landed.pathname}, already scanned — skipped.`);
               continue;
             }
+            // Strict scope: a redirect that lands outside scope is not scanned,
+            // even though the requested URL was in scope. The user asked for a
+            // specific area; a bounce out of it is not what they asked to capture.
+            if (scope.active && !scope.allows(landed.href)) {
+              log(`↪ ${target.pathname} redirected to ${landed.pathname}, outside scope — not scanned.`);
+              visited.add(landedKey);
+              continue;
+            }
             visited.add(landedKey);
             log(`↪ ${target.pathname} redirected to ${landed.pathname} — scanning the destination.`);
           }
@@ -535,6 +548,16 @@ export function createCrawler() {
         state.unitsTotal = maxPages;
         log(`Crawl started at ${origin} (max ${maxPages} pages).`);
         if (scope.active) log(`Scope: staying within ${scope.includeCount} include pattern(s)${scope.excludeCount ? `, ${scope.excludeCount} exclusion(s)` : ""}.`);
+        // Strict scope also governs the ENTRY POINT. If the open session is on a
+        // page outside scope (e.g. logged in at "/" but scope is /ecare/*), do not
+        // scan it — that is exactly the "don't capture anything I didn't ask for"
+        // rule. Tell the user plainly rather than silently scanning the wrong page.
+        if (scope.active && !scope.allows(page.url())) {
+          let p; try { p = new URL(page.url()).pathname; } catch { p = page.url(); }
+          state.error = `The open page (${p}) is outside the path scope you set. Navigate to a page inside the scope (e.g. /ecare) before scanning, or widen the scope.`;
+          log(`✖ Entry page ${p} is out of scope — nothing scanned. ${state.error}`);
+          state.running = false;
+        }
         // Bound by pages VISITED, not pages scanned. With template coverage on,
         // skipped repeats never grow pagesScanned, so a scanned-count condition
         // would let the crawl walk an unbounded number of near-identical pages.
@@ -546,6 +569,13 @@ export function createCrawler() {
           const pageKey = url.origin + url.pathname;
           state.currentUrl = page.url();
 
+          // A page may have been navigated to in-bounds but REDIRECTED out of scope
+          // (SSO bounce, canonical redirect to a marketing page). Strict scope means
+          // we do not scan where we landed if it is outside scope.
+          if (scope.active && !scope.allows(page.url())) {
+            log(`↪ Landed on ${url.pathname}, which is outside scope — not scanned.`);
+            visited.add(pageKey);
+          } else
           if (!visited.has(pageKey)) {
             visited.add(pageKey);
             // Have we already scanned enough pages of this route template? If so,

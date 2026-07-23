@@ -180,6 +180,72 @@ export async function installHighlighter(page) {
 //
 // The cropped shots above show a failing element up close but lose the page
 // context — you can't tell WHERE on the page the issue sits. This captures ONE
+// Prepare a page for a full-page screenshot.
+//
+// A full-page shot of a real portal is often half-blank without this: images with
+// loading="lazy" below the fold never fetch until scrolled near, and SPA content
+// can still be arriving. Management reads a blank hero as "the tool is broken", so
+// the screenshot has to show the page a human would actually see.
+//
+// Everything here is BOUNDED. A hanging analytics beacon or an infinite-scroll
+// feed must not stall the scan, so every wait has a ceiling and we always return.
+export async function settleForCapture(page, opts = {}) {
+  const settleMs = opts.settleMs ?? 600;      // quiet period after scrolling
+  const idleMs = opts.networkIdleMs ?? 2500;  // max wait for network to go quiet
+  const maxScrollMs = opts.maxScrollMs ?? 4000;
+
+  try {
+    // 1 · Walk the page top-to-bottom to bring lazy content into view, then back
+    // to the top so the capture starts from a clean origin. Bounded by both a
+    // step cap and wall-clock time — an infinite-scroll page would never "end".
+    // maxScrollMs:0 skips the walk entirely (used for interaction states, where
+    // scrolling could dismiss an open modal or drawer).
+    if (maxScrollMs > 0) {
+      await page.evaluate(async (maxMs) => {
+      const started = Date.now();
+      const step = Math.max(300, Math.floor(window.innerHeight * 0.9));
+      const bottom = () =>
+        Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
+      let y = 0;
+      // scroll down
+      while (y < bottom() && Date.now() - started < maxMs) {
+        y += step;
+        window.scrollTo(0, y);
+        await new Promise((r) => setTimeout(r, 120));
+      }
+      window.scrollTo(0, 0);
+      // give the top a moment to repaint after the jump back
+      await new Promise((r) => setTimeout(r, 150));
+    }, maxScrollMs);
+    }
+
+    // 2 · Wait for the network to go quiet, but never longer than idleMs. A page
+    // that keeps a socket open forever should not block the shot.
+    await Promise.race([
+      page.waitForLoadState("networkidle").catch(() => {}),
+      new Promise((r) => setTimeout(r, idleMs)),
+    ]);
+
+    // 3 · Decode any images that are now in the DOM but not yet painted. Without
+    // this a just-fetched hero can still screenshot blank.
+    await page.evaluate(async () => {
+      const imgs = [...document.images].filter((im) => !im.complete);
+      await Promise.race([
+        Promise.all(imgs.map((im) => im.decode().catch(() => {}))),
+        new Promise((r) => setTimeout(r, 1500)),
+      ]);
+      if (document.fonts?.ready) { try { await Promise.race([document.fonts.ready, new Promise((r) => setTimeout(r, 800))]); } catch { /* ignore */ } }
+    });
+
+    // 4 · A short final quiet period so late animations (accordions, skeletons)
+    // land before the shutter.
+    await page.waitForTimeout(settleMs);
+  } catch {
+    // Settling is best-effort. If anything throws, we still take the shot — a
+    // slightly-early screenshot beats no evidence at all.
+  }
+}
+
 // full-page screenshot per page (not per element, so a 200-issue page stays
 // small) plus each failing element's bounding box in full-page CSS coordinates.
 // The report draws the "issue square" as an HTML overlay on the shared image, so
@@ -193,9 +259,18 @@ export async function captureFullPageAnnotated(page, violations, opts = {}) {
   const maxTotal = opts.maxTotal ?? 30;
   const quality = opts.quality ?? 55;
 
+  // Give the page time to finish loading before the shutter — lazy images,
+  // in-flight requests, late animations. Skippable (settle:false) for callers
+  // that have already settled the page (e.g. an interaction state we just opened
+  // and must not disturb).
+  if (opts.settle !== false) {
+    await settleForCapture(page, opts.settleOpts || {});
+  }
+
   let pageShot = null;
   let pageW = 0;
   let pageH = 0;
+  let shotPath = null;
   try {
     const dims = await page.evaluate(() => ({
       w: Math.max(document.documentElement.scrollWidth, document.documentElement.clientWidth),
@@ -206,7 +281,24 @@ export async function captureFullPageAnnotated(page, violations, opts = {}) {
     // scale:'css' captures at CSS-pixel resolution (not 2x retina), so image
     // pixels line up 1:1 with the boxes below and the file stays ~4x smaller.
     const buf = await page.screenshot({ type: "jpeg", quality, fullPage: true, scale: "css" });
-    pageShot = buf.toString("base64");
+
+    // Save to disk when a directory is given: a 1000-page report with full-page
+    // JPEGs embedded as base64 would be a huge, slow session blob. On disk the
+    // session JSON stays small and the images survive a restart. Callers that
+    // don't pass saveDir still get base64 (back-compatible).
+    if (opts.saveDir && opts.shotName) {
+      try {
+        const { writeFileSync, mkdirSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        mkdirSync(opts.saveDir, { recursive: true });
+        const file = join(opts.saveDir, `${opts.shotName}.jpg`);
+        writeFileSync(file, buf);
+        shotPath = file;
+      } catch {
+        shotPath = null;   // fall back to base64 below
+      }
+    }
+    if (!shotPath) pageShot = buf.toString("base64");
   } catch {
     pageShot = null; // findings still returned, just without the visual
   }
@@ -257,6 +349,7 @@ export async function captureFullPageAnnotated(page, violations, opts = {}) {
   return {
     violations: out,
     pageShot,
+    shotPath,
     pageW,
     pageH,
     stats: { taken, notFound, budget, maxPerRule, maxTotal },

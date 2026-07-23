@@ -17,7 +17,32 @@ import { generatedBy } from "./finding-block.mjs";
 // buildSiteReport so findingCard can look up the image for a node's page and
 // overlay the issue box. Kept module-scoped (single-threaded generation) to
 // avoid threading it through every render helper.
+import { readFileSync } from "node:fs";
+
 let PAGE_SHOTS = {};
+
+// A shot may be inline base64 (small scans) or a path on disk (big scans, saved
+// during the crawl to keep the session JSON small). Either way the report inlines
+// the bytes so the final HTML is a single portable file — a folder of images that
+// break when the report is emailed is exactly what management does not want. The
+// disk read is cached per shot object so a page with 30 findings reads it once.
+const __shotCache = new WeakMap();
+function resolveShotData(s) {
+  if (!s) return null;
+  if (s.shot) return s.shot;                       // already inline
+  if (__shotCache.has(s)) return __shotCache.get(s);
+  if (s.shotPath) {
+    try {
+      const b64 = readFileSync(s.shotPath).toString("base64");
+      __shotCache.set(s, b64);
+      return b64;
+    } catch {
+      __shotCache.set(s, null);
+      return null;                                 // file missing/moved — skip the image, keep the finding
+    }
+  }
+  return null;
+}
 
 const BOX_COLOR = { critical: "#FF5A5A", serious: "#FF9E3D", moderate: "#F2C230", minor: "#5CA8FF" };
 
@@ -32,7 +57,9 @@ function fullPageEvidence(nodes, impact) {
     if (!n.box) continue;
     const key = n.shotKey || n.page;
     const s = PAGE_SHOTS[key];
-    if (!s || !s.shot || !s.w || !s.h) continue;
+    // A shot is usable if it has pixels EITHER inline (s.shot) or on disk
+    // (s.shotPath). resolveShotData() reads the disk file once and caches it.
+    if (!s || !s.w || !s.h || (!s.shot && !s.shotPath)) continue;
     if (!byShot.has(key)) byShot.set(key, { s, boxes: [], label: n.shotTitle || n.page });
     byShot.get(key).boxes.push(n);
   }
@@ -41,6 +68,8 @@ function fullPageEvidence(nodes, impact) {
   const color = BOX_COLOR[impact] ?? BOX_COLOR.minor;
   return groups
     .map(({ s, boxes, label }) => {
+      const b64 = resolveShotData(s);
+      if (!b64) return "";
       const rects = boxes
         .map((n, i) => {
           const b = n.box;
@@ -54,7 +83,7 @@ function fullPageEvidence(nodes, impact) {
         })
         .join("");
       return `<details class="shot" open><summary>Full-page screenshot &mdash; ${esc(label)} <span class="muted">(${boxes.length} callout${boxes.length === 1 ? "" : "s"})</span></summary>
-        <div class="fullshot"><img loading="lazy" src="data:image/jpeg;base64,${s.shot}" alt="Full-page screenshot with the failing element outlined in red">${rects}</div>
+        <div class="fullshot"><img loading="lazy" src="data:image/jpeg;base64,${b64}" alt="Full-page screenshot with the failing element outlined in red">${rects}</div>
       </details>`;
     })
     .join("");

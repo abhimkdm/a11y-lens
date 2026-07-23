@@ -606,6 +606,11 @@ app.post("/scan/full/start", (req, res) => {
     // Path scope, e.g. ["/ecare", "/ecare/*"]. Keeps the crawl in the area under
     // test. Accepts an array or a comma/newline string.
     scope: req.body?.scope,
+    // Full-page screenshots are saved here during the scan (kept out of the
+    // session JSON), then inlined into the report HTML at generation time. One
+    // directory per run so concurrent-ish runs don't clobber each other.
+    shotDir: join(EXPORT_DIR, "shots", `scan-${Date.now()}`),
+    captureSettleMs: req.body?.captureSettleMs,
   });
   res.json({
     ok: true,
