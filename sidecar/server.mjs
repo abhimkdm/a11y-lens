@@ -50,6 +50,7 @@ import { renderMobileAiUsageReportHtml } from "./mobile/report-ai-usage-html.mjs
 import { sessions, settings, audit, logs, crawls, rawDb } from "./db.mjs";
 import { encrypt, decrypt, maskScan, assertProviderAllowed } from "./security.mjs";
 import { compareScans } from "./compare.mjs";
+import { mergeSessions } from "./merge-sessions.mjs";
 
 const require = createRequire(import.meta.url);
 const axeSource = readFileSync(require.resolve("axe-core/axe.min.js"), "utf8");
@@ -1325,6 +1326,31 @@ app.post("/compare", (req, res) => {
   const a = sessions.get(+prevId), b = sessions.get(+currId);
   if (!a || !b) return res.status(404).json({ ok: false, error: "One or both sessions not found." });
   res.json({ ok: true, comparison: compareScans(a, b) });
+});
+
+// Merge saved scans into one combined report. Distinct from /compare: that shows
+// what CHANGED between two runs; this presents both as a single body of evidence
+// (e.g. an /ecare run plus a /shop run, or a static run plus an AI run).
+app.post("/sessions/merge", (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Boolean) : [];
+  if (ids.length < 2) {
+    return res.status(400).json({ ok: false, error: "Select at least two saved scans to merge." });
+  }
+  const loaded = ids.map((id) => ({ id, data: sessions.get(id) }));
+  const missing = loaded.filter((l) => !l.data).map((l) => l.id);
+  if (missing.length) {
+    return res.status(404).json({ ok: false, error: `Scan(s) not found: ${missing.join(", ")}.` });
+  }
+  try {
+    const merged = mergeSessions(loaded.map((l) => l.data), { title: req.body?.title });
+    // Save it like any other scan so it appears in the dashboard and can be
+    // exported, AI-reported, or merged again.
+    const id = sessions.save(merged);
+    audit.log("sessions.merge", `${ids.join(" + ")} -> ${id}`);
+    res.json({ ok: true, id, merged: { ...merged, pages: undefined }, warnings: merged.warnings });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: String(e.message ?? e) });
+  }
 });
 
 

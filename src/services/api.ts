@@ -157,6 +157,11 @@ export const api = {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ scan }),
     }),
+  mergeSessions: (ids: number[], title?: string) =>
+    req(`${BASE}/sessions/merge`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids, title }),
+    }),
   compare: (prevId: number, currId: number) =>
     req(`${BASE}/compare`, {
       method: "POST", headers: { "Content-Type": "application/json" },

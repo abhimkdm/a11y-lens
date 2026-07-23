@@ -8,6 +8,7 @@ import PaidOutlinedIcon from "@mui/icons-material/PaidOutlined";
 import UploadIcon from "@mui/icons-material/Upload";
 import DeleteIcon from "@mui/icons-material/DeleteOutline";
 import CompareArrowsIcon from "@mui/icons-material/CompareArrows";
+import MergeIcon from "@mui/icons-material/CallMerge";
 import SeverityChip from "../components/SeverityChip";
 import { api } from "../services/api";
 import { buildHtmlReport } from "../utils/reportHtml";
@@ -74,6 +75,7 @@ export default function Reports() {
   const [rows, setRows] = useState<SessionRow[]>([]);
   const [selected, setSelected] = useState<number[]>([]);
   const [cmp, setCmp] = useState<Comparison | null>(null);
+  const [mergeWarnings, setMergeWarnings] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
   const [busy, setBusy] = useState(0);
@@ -105,8 +107,25 @@ export default function Reports() {
       .catch(() => setOffline(true));
   useEffect(() => { refresh(); }, []);
 
+  // Compare needs exactly two, but merge can take several — so selection is no
+  // longer capped at two. The Compare button stays disabled unless exactly two
+  // are ticked, which keeps its meaning unambiguous.
   const toggle = (id: number) =>
-    setSelected((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s.slice(-1), id]);
+    setSelected((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
+
+  // Merge the selected scans into one saved report. Unlike Compare (which shows
+  // what changed), this produces a single combined document — the thing you hand
+  // to management when the evidence came from more than one run.
+  const runMerge = async () => {
+    setError(""); setMergeWarnings([]); setBusy((b) => b + 1);
+    const r = await api.mergeSessions(selected).catch((e) => ({ ok: false, error: String(e) }));
+    setBusy((b) => b - 1);
+    if (!r.ok) { setError(r.error ?? "Could not merge the selected scans."); return; }
+    setMergeWarnings(r.warnings ?? []);
+    setSelected([]);
+    setSaved(`Merged ${selected.length} scans into a new report.`);
+    refresh();
+  };
 
   const runCompare = async () => {
     setError(""); setCmp(null);
@@ -170,7 +189,21 @@ export default function Reports() {
                 disabled={selected.length !== 2} onClick={runCompare}>
           Compare selected
         </Button>
+        <Tooltip title="Combine the selected scans into one report — e.g. an /ecare run plus a /shop run, or a static run plus an AI run. Pages scanned in both are merged into one row and duplicate findings are removed, so totals are not double-counted.">
+          <span>
+            <Button variant="outlined" startIcon={<MergeIcon />}
+                    disabled={selected.length < 2 || busy > 0} onClick={runMerge}>
+              Merge selected
+            </Button>
+          </span>
+        </Tooltip>
       </Stack>
+
+      {mergeWarnings.length > 0 && (
+        <Alert severity="warning" onClose={() => setMergeWarnings([])}>
+          {mergeWarnings.map((w, i) => <div key={i}>{w}</div>)}
+        </Alert>
+      )}
 
       {offline && <Alert severity="warning">Sidecar not reachable — start it with <code>npm run sidecar</code> to see saved sessions.</Alert>}
       {error && <Alert severity="error">{error}</Alert>}
